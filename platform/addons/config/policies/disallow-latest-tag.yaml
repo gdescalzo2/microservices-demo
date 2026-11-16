@@ -1,0 +1,30 @@
+# Mutable tags (":latest" or no tag) make rollbacks unreliable: what you roll
+# back to may not be what was running. Enforced (blocks admission).
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: disallow-latest-tag
+  annotations:
+    policies.kyverno.io/title: Disallow latest tag
+    policies.kyverno.io/category: Best Practices
+spec:
+  background: true
+  rules:
+    - name: require-explicit-tag
+      match:
+        any:
+          - resources:
+              kinds: [Pod]
+              namespaceSelector:
+                matchExpressions:
+                  - key: platform.example.com/environment
+                    operator: Exists
+      validate:
+        failureAction: Enforce
+        message: "Images must use an explicit, immutable tag or digest (not ':latest')."
+        pattern:
+          spec:
+            =(initContainers):
+              - image: "*:* & !*:latest"
+            containers:
+              - image: "*:* & !*:latest"

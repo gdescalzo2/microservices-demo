@@ -1,0 +1,23 @@
+# Platform-level configuration, owned by the platform team and synced by the
+# Argo CD Application "platform-config". Requires the CRDs installed by
+# bootstrap.sh (Gateway API, Prometheus Operator, Kyverno).
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+  - gateway/gateway.yaml
+  - monitoring/prometheusrule-boutique.yaml
+  - policies/disallow-latest-tag.yaml
+  - policies/require-owner-label.yaml
+  - policies/require-requests-limits.yaml
+  - policies/require-probes.yaml
+
+configMapGenerator:
+  - name: grafana-dashboard-boutique
+    namespace: monitoring
+    files:
+      - monitoring/boutique-dashboard.json
+    options:
+      disableNameSuffixHash: true
+      labels:
+        grafana_dashboard: "1"

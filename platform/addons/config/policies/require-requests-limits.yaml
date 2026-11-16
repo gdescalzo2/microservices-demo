@@ -1,0 +1,32 @@
+# Audit only: reported in PolicyReports (kubectl get polr -A), never blocks.
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: require-requests-limits
+  annotations:
+    policies.kyverno.io/title: Require requests and memory limits
+    policies.kyverno.io/category: Best Practices
+spec:
+  background: true
+  rules:
+    - name: containers-have-resources
+      match:
+        any:
+          - resources:
+              kinds: [Pod]
+              namespaceSelector:
+                matchExpressions:
+                  - key: platform.example.com/environment
+                    operator: Exists
+      validate:
+        failureAction: Audit
+        message: "Containers should set CPU/memory requests and a memory limit."
+        pattern:
+          spec:
+            containers:
+              - resources:
+                  requests:
+                    cpu: "?*"
+                    memory: "?*"
+                  limits:
+                    memory: "?*"

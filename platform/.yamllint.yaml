@@ -1,0 +1,11 @@
+extends: default
+rules:
+  line-length: disable
+  document-start: disable
+  comments: {min-spaces-from-content: 1}
+  comments-indentation: disable
+  truthy: {check-keys: false}
+  indentation: {spaces: consistent, indent-sequences: whatever}
+  braces: {max-spaces-inside: 1}
+ignore: |
+  platform/krateo/boutique-service/templates/

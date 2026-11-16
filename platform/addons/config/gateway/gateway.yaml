@@ -1,0 +1,27 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: gateway-infra
+---
+# Shared entry point for all environments. Implemented locally by
+# cloud-provider-kind (GatewayClass "cloud-provider-kind"); on a real cluster
+# swap gatewayClassName (Envoy Gateway, Istio, NGINX Gateway Fabric, cloud LB).
+# On OpenShift the equivalent is a Route, or Gateway API on OCP >= 4.19.
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: boutique-gateway
+  namespace: gateway-infra
+spec:
+  gatewayClassName: cloud-provider-kind
+  listeners:
+    - name: http
+      protocol: HTTP
+      port: 80
+      allowedRoutes:
+        namespaces:
+          # Only namespaces explicitly enabled by the platform team may attach routes.
+          from: Selector
+          selector:
+            matchLabels:
+              platform.example.com/gateway-access: "true"

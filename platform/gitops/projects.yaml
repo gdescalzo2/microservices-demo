@@ -1,0 +1,48 @@
+# AppProjects = guardrails for what each Argo CD Application may deploy.
+apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
+  name: platform
+  namespace: argocd
+spec:
+  description: Platform-team owned configuration (gateway, alerts, dashboards, policies)
+  sourceRepos:
+    - https://github.com/YOUR_GITHUB_USER/microservices-demo.git
+  destinations:
+    - server: https://kubernetes.default.svc
+      namespace: gateway-infra
+    - server: https://kubernetes.default.svc
+      namespace: monitoring
+  clusterResourceWhitelist:
+    - group: ""
+      kind: Namespace
+    - group: kyverno.io
+      kind: ClusterPolicy
+---
+apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
+  name: boutique
+  namespace: argocd
+spec:
+  description: Online Boutique application team - may only deploy into boutique-* namespaces
+  sourceRepos:
+    - https://github.com/YOUR_GITHUB_USER/microservices-demo.git
+  destinations:
+    - server: https://kubernetes.default.svc
+      namespace: boutique-dev
+    - server: https://kubernetes.default.svc
+      namespace: boutique-prod
+  # The team may create its own Namespace object (with PSA labels) and nothing
+  # else at cluster scope: no ClusterRoles, no CRDs, no webhooks.
+  clusterResourceWhitelist:
+    - group: ""
+      kind: Namespace
+  # Resources the team must not manage itself.
+  namespaceResourceBlacklist:
+    - group: ""
+      kind: ResourceQuota
+    - group: ""
+      kind: LimitRange
+  orphanedResources:
+    warn: true

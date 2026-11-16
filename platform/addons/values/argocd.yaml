@@ -1,0 +1,10 @@
+# Minimal Argo CD: no SSO (dex), no notifications. UI via port-forward.
+dex:
+  enabled: false
+notifications:
+  enabled: false
+configs:
+  params:
+    server.insecure: true            # TLS terminated by kubectl port-forward locally
+  cm:
+    timeout.reconciliation: 60s      # poll Git every 60s (default 180s): faster demo

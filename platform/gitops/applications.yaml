@@ -1,0 +1,70 @@
+# Argo CD Applications. Git is the source of truth: a commit on main is a
+# release; a revert is a rollback.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: platform-config
+  namespace: argocd
+spec:
+  project: platform
+  source:
+    repoURL: https://github.com/YOUR_GITHUB_USER/microservices-demo.git
+    targetRevision: main
+    path: platform/addons/config
+  destination:
+    server: https://kubernetes.default.svc
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: boutique-dev
+  namespace: argocd
+  labels:
+    platform.example.com/environment: dev
+spec:
+  project: boutique
+  source:
+    repoURL: https://github.com/YOUR_GITHUB_USER/microservices-demo.git
+    targetRevision: main
+    path: platform/deploy/overlays/dev
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: boutique-dev
+  syncPolicy:
+    automated:
+      prune: true
+      # DEV: no self-heal on purpose. Manual changes (troubleshooting, chaos
+      # scenarios) stay in place and show up as "OutOfSync" until resynced.
+      selfHeal: false
+    syncOptions:
+      - PruneLast=true
+  revisionHistoryLimit: 10
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: boutique-prod
+  namespace: argocd
+  labels:
+    platform.example.com/environment: prod
+spec:
+  project: boutique
+  source:
+    repoURL: https://github.com/YOUR_GITHUB_USER/microservices-demo.git
+    targetRevision: main
+    path: platform/deploy/overlays/prod
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: boutique-prod
+  syncPolicy:
+    automated:
+      prune: true
+      # PROD: any manual drift (kubectl edit/scale/set image) is reverted.
+      selfHeal: true
+    syncOptions:
+      - PruneLast=true
+  revisionHistoryLimit: 10

@@ -1,0 +1,28 @@
+# Every workload must declare its owning team: needed for alert routing,
+# cost allocation (FinOps) and catalog ownership (e.g. Krateo).
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: require-owner-label
+  annotations:
+    policies.kyverno.io/title: Require owner label
+    policies.kyverno.io/category: Governance
+spec:
+  background: true
+  rules:
+    - name: deployment-has-owner
+      match:
+        any:
+          - resources:
+              kinds: [Deployment]
+              namespaceSelector:
+                matchExpressions:
+                  - key: platform.example.com/environment
+                    operator: Exists
+      validate:
+        failureAction: Enforce
+        message: "Deployments must have the label 'platform.example.com/owner'."
+        pattern:
+          metadata:
+            labels:
+              platform.example.com/owner: "?*"

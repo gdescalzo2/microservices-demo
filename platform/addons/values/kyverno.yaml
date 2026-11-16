@@ -1,0 +1,9 @@
+# Single replica of each controller: enough for a demo cluster.
+admissionController:
+  replicas: 1
+backgroundController:
+  replicas: 1
+reportsController:
+  replicas: 1
+cleanupController:
+  enabled: false

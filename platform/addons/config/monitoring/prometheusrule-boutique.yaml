@@ -1,0 +1,95 @@
+# Alerts for every Online Boutique environment (namespaces boutique-*).
+# Each alert links to the matching section of the runbook.
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: boutique-alerts
+  namespace: monitoring
+spec:
+  groups:
+    - name: boutique.frontend
+      rules:
+        - alert: BoutiqueFrontendHighErrorRate
+          expr: |
+            sum by (namespace) (rate(boutique_frontend_http_requests_total{code=~"5.."}[5m]))
+              /
+            sum by (namespace) (rate(boutique_frontend_http_requests_total[5m]))
+              > 0.05
+          for: 2m
+          labels:
+            severity: warning
+          annotations:
+            summary: "Frontend 5xx ratio above 5% in {{ $labels.namespace }}"
+            description: "{{ $value | humanizePercentage }} of requests fail. Check which route fails, then the backend it calls."
+            runbook_url: https://github.com/YOUR_GITHUB_USER/microservices-demo/blob/main/docs/challenge/runbook.md#rb-frontend-errors
+        - alert: BoutiqueCheckoutFailing
+          expr: |
+            sum by (namespace) (rate(boutique_frontend_http_requests_total{route="/cart/checkout",code=~"5.."}[5m])) > 0
+          for: 1m
+          labels:
+            severity: critical
+          annotations:
+            summary: "Orders are failing in {{ $labels.namespace }}"
+            description: "POST /cart/checkout returns 5xx: customers cannot buy. Checkout calls cart, catalog, currency, shipping, payment, email."
+            runbook_url: https://github.com/YOUR_GITHUB_USER/microservices-demo/blob/main/docs/challenge/runbook.md#rb-checkout
+        - alert: BoutiqueFrontendLatencyHigh
+          expr: |
+            histogram_quantile(0.95,
+              sum by (namespace, le) (rate(boutique_frontend_http_request_duration_seconds_bucket{route!~"/static|/_healthz"}[5m]))
+            ) > 1
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: "Frontend p95 latency above 1s in {{ $labels.namespace }}"
+            runbook_url: https://github.com/YOUR_GITHUB_USER/microservices-demo/blob/main/docs/challenge/runbook.md#rb-latency
+        - alert: BoutiqueFrontendMetricsDown
+          expr: up{job="frontend-metrics", namespace=~"boutique-.*"} == 0
+          for: 2m
+          labels:
+            severity: warning
+          annotations:
+            summary: "Prometheus cannot scrape frontend {{ $labels.pod }} in {{ $labels.namespace }}"
+            runbook_url: https://github.com/YOUR_GITHUB_USER/microservices-demo/blob/main/docs/challenge/runbook.md#rb-metrics-down
+    - name: boutique.workloads
+      rules:
+        - alert: BoutiqueContainerWaiting
+          expr: |
+            max by (namespace, pod, container, reason) (
+              kube_pod_container_status_waiting_reason{namespace=~"boutique-.*",
+                reason=~"ImagePullBackOff|ErrImagePull|CrashLoopBackOff|CreateContainerConfigError|InvalidImageName"}
+            ) > 0
+          for: 1m
+          labels:
+            severity: warning
+          annotations:
+            summary: "{{ $labels.namespace }}/{{ $labels.pod }} ({{ $labels.container }}) stuck in {{ $labels.reason }}"
+            runbook_url: https://github.com/YOUR_GITHUB_USER/microservices-demo/blob/main/docs/challenge/runbook.md#rb-pod-waiting
+        - alert: BoutiqueContainerOOMKilled
+          expr: |
+            max by (namespace, pod, container) (
+              kube_pod_container_status_last_terminated_reason{namespace=~"boutique-.*", reason="OOMKilled"}
+            ) == 1
+          labels:
+            severity: warning
+          annotations:
+            summary: "{{ $labels.namespace }}/{{ $labels.pod }} ({{ $labels.container }}) was OOMKilled"
+            runbook_url: https://github.com/YOUR_GITHUB_USER/microservices-demo/blob/main/docs/challenge/runbook.md#rb-oom
+        - alert: BoutiquePodRestarting
+          expr: |
+            increase(kube_pod_container_status_restarts_total{namespace=~"boutique-.*"}[10m]) > 2
+          labels:
+            severity: warning
+          annotations:
+            summary: "{{ $labels.namespace }}/{{ $labels.pod }} restarted {{ $value | humanize }} times in 10m"
+            runbook_url: https://github.com/YOUR_GITHUB_USER/microservices-demo/blob/main/docs/challenge/runbook.md#rb-pod-waiting
+        - alert: BoutiqueDeploymentReplicasMismatch
+          expr: |
+            kube_deployment_spec_replicas{namespace=~"boutique-.*"}
+              != kube_deployment_status_replicas_available{namespace=~"boutique-.*"}
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: "{{ $labels.namespace }}/{{ $labels.deployment }} has fewer available replicas than desired"
+            runbook_url: https://github.com/YOUR_GITHUB_USER/microservices-demo/blob/main/docs/challenge/runbook.md#rb-rollout-stuck
