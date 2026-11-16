@@ -1,170 +1,154 @@
-<!-- <p align="center">
-<img src="/src/frontend/static/icons/Hipster_HeroLogoMaroon.svg" width="300" alt="Online Boutique" />
-</p> -->
-![Continuous Integration](https://github.com/GoogleCloudPlatform/microservices-demo/workflows/Continuous%20Integration%20-%20Main/Release/badge.svg)
+# Online Boutique come servizio di piattaforma — Challenge L2
 
-**Online Boutique** is a cloud-first microservices demo application.  The application is a
-web-based e-commerce app where users can browse items, add them to the cart, and purchase them.
+Fork di [GoogleCloudPlatform/microservices-demo](https://github.com/GoogleCloudPlatform/microservices-demo) (Online Boutique) portato a un livello di rilascio, esercizio e demo su Kubernetes: due ambienti (dev/prod), GitOps con Argo CD, Gateway API, osservabilità con Prometheus/Grafana, sicurezza minima (Secret, RBAC, Pod Security, NetworkPolicy, Kyverno), runbook, scenari di guasto riproducibili e una PoC Krateo per esporre il servizio in self-service.
 
-Google uses this application to demonstrate how developers can modernize enterprise applications using Google Cloud products, including: [Google Kubernetes Engine (GKE)](https://cloud.google.com/kubernetes-engine), [Cloud Service Mesh (CSM)](https://cloud.google.com/service-mesh), [gRPC](https://grpc.io/), [Cloud Operations](https://cloud.google.com/products/operations), [Spanner](https://cloud.google.com/spanner), [Memorystore](https://cloud.google.com/memorystore), [AlloyDB](https://cloud.google.com/alloydb), and [Gemini](https://ai.google.dev/). This application works on any Kubernetes cluster.
+Il README originale del progetto è in [README.upstream.md](README.upstream.md).
 
-If you’re using this demo, please **★Star** this repository to show your interest!
+| Documento | Contenuto |
+|---|---|
+| [docs/challenge/architecture.md](docs/challenge/architecture.md) | Architettura applicativa e di piattaforma, flussi, scelte e trade-off |
+| [docs/challenge/runbook.md](docs/challenge/runbook.md) | Verifica, troubleshooting per sintomo, rollback |
+| [docs/challenge/security.md](docs/challenge/security.md) | Secret, RBAC, policy, supply chain, limiti residui |
+| [docs/challenge/krateo.md](docs/challenge/krateo.md) | Valutazione Krateo, blueprint e PoC |
+| [docs/challenge/ai-usage.md](docs/challenge/ai-usage.md) | Come è stata usata l'AI, cosa è stato verificato e scartato |
+| [docs/challenge/demo.md](docs/challenge/demo.md) | Copione della demo end-to-end (11 passi richiesti) |
 
-**Note to Googlers:** Please fill out the form at [go/microservices-demo](http://go/microservices-demo).
+---
 
-## Architecture
+## 1. Perché Online Boutique
 
-**Online Boutique** is composed of 11 microservices written in different
-languages that talk to each other over gRPC.
+**Dominio.** È un e-commerce dimostrativo: catalogo, carrello, conversione valuta, checkout con pagamento e spedizione simulati, email di conferma, raccomandazioni e banner pubblicitari. Un generatore di carico (Locust) simula gli utenti.
 
-[![Architecture of
-microservices](/docs/img/architecture-diagram.png)](/docs/img/architecture-diagram.png)
+**Perché è adatta a una challenge L2:**
 
-Find **Protocol Buffers Descriptions** at the [`./protos` directory](/protos).
+| Criterio | Online Boutique |
+|---|---|
+| Complessità | 11 microservizi + Redis, 5 linguaggi (Go, C#, Node.js, Python, Java) |
+| Pertinenza cloud-native | Progettata per Kubernetes, comunicazione interna gRPC, frontend HTTP, servizi stateless + uno stateful |
+| Manifest disponibili | Kustomize base + componenti, Helm chart, manifest "release" |
+| Osservabilità | Log JSON strutturati e probe gRPC/HTTP già presenti; **nessuna metrica Prometheus** (lacuna colmata qui) |
+| Idoneità alla demo | UI visibile, flusso d'acquisto end-to-end testabile con curl, carico generato in automatico |
+| Scenari di guasto realistici | Catena di dipendenze lunga (checkout chiama 6 servizi): un guasto in profondità produce sintomi in superficie, ideale per il troubleshooting |
 
-| Service                                              | Language      | Description                                                                                                                       |
-| ---------------------------------------------------- | ------------- | --------------------------------------------------------------------------------------------------------------------------------- |
-| [frontend](/src/frontend)                           | Go            | Exposes an HTTP server to serve the website. Does not require signup/login and generates session IDs for all users automatically. |
-| [cartservice](/src/cartservice)                     | C#            | Stores the items in the user's shopping cart in Redis and retrieves it.                                                           |
-| [productcatalogservice](/src/productcatalogservice) | Go            | Provides the list of products from a JSON file and ability to search products and get individual products.                        |
-| [currencyservice](/src/currencyservice)             | Node.js       | Converts one money amount to another currency. Uses real values fetched from European Central Bank. It's the highest QPS service. |
-| [paymentservice](/src/paymentservice)               | Node.js       | Charges the given credit card info (mock) with the given amount and returns a transaction ID.                                     |
-| [shippingservice](/src/shippingservice)             | Go            | Gives shipping cost estimates based on the shopping cart. Ships items to the given address (mock)                                 |
-| [emailservice](/src/emailservice)                   | Python        | Sends users an order confirmation email (mock).                                                                                   |
-| [checkoutservice](/src/checkoutservice)             | Go            | Retrieves user cart, prepares order and orchestrates the payment, shipping and the email notification.                            |
-| [recommendationservice](/src/recommendationservice) | Python        | Recommends other products based on what's given in the cart.                                                                      |
-| [adservice](/src/adservice)                         | Java          | Provides text ads based on given context words.                                                                                   |
-| [loadgenerator](/src/loadgenerator)                 | Python/Locust | Continuously sends requests imitating realistic user shopping flows to the frontend.                                              |
+Alternative considerate: *Sock Shop* (Weaveworks, non più mantenuto) e *OpenTelemetry Demo* (più completo sull'osservabilità, ma circa il doppio dei componenti, troppo pesante per una VM con 10 GB di RAM).
 
-## Screenshots
+**Parti usate nella challenge:** tutti i servizi del Kustomize base upstream (`kustomize/base`), il componente upstream `network-policies` e il codice del **frontend** (modificato). Non usati: il servizio `shoppingassistantservice` (richiede Gemini/AlloyDB su GCP), i componenti GCP (Spanner, Memorystore, Cloud Operations), Terraform e i manifest Istio.
 
-| Home Page                                                                                                         | Checkout Screen                                                                                                    |
-| ----------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------ |
-| [![Screenshot of store homepage](/docs/img/online-boutique-frontend-1.png)](/docs/img/online-boutique-frontend-1.png) | [![Screenshot of checkout screen](/docs/img/online-boutique-frontend-2.png)](/docs/img/online-boutique-frontend-2.png) |
+## 2. Cosa è stato aggiunto o modificato rispetto all'upstream
 
-## Quickstart (GKE)
+| Area | Modifica | Dove |
+|---|---|---|
+| Codice | Frontend: metriche Prometheus su porta dedicata `9090` (richieste per route/codice, istogramma latenza, `build_info` con versione), header `X-App-Version`, versione iniettata in build. Test unitari. | `src/frontend/metrics.go`, `metrics_test.go`, `main.go`, `Dockerfile` |
+| Packaging | Base di piattaforma sopra il Kustomize upstream + overlay `dev`/`prod` + componenti | `platform/deploy/` |
+| Esposizione | Gateway API (Gateway condiviso + HTTPRoute per ambiente) al posto del Service LoadBalancer | `platform/addons/config/gateway/`, `overlays/*/httproute.yaml` |
+| Sicurezza | Redis con password da Secret (non in Git), ServiceAccount dedicato anche a Redis, nessun token API montato, seccomp, PSA `restricted`, RBAC per persona, policy Kyverno | `platform/deploy/base/patches/`, `overlays/*/rbac.yaml`, `platform/addons/config/policies/` |
+| GitOps | Argo CD: AppProject con guardrail, 3 Application (platform-config, dev, prod) | `platform/gitops/` |
+| Osservabilità | ServiceMonitor, 8 regole di alert con link al runbook, dashboard Grafana | `platform/deploy/components/observability/`, `platform/addons/config/monitoring/` |
+| CI | Lint, render + validazione schema, guard "no Secret in Git", test Go, build immagine + Trivy, push su GHCR. Action pinnate a SHA. | `.github/workflows/platform-ci.yaml` |
+| Operatività | Bootstrap idempotente, smoke test end-to-end, release/rollback GitOps, scenari di guasto, verifica RBAC | `platform/scripts/` |
+| Krateo | Chart "golden path" con `values.schema.json`, CompositionDefinition, PoC con core-provider | `platform/krateo/`, `platform/scripts/krateo-poc.sh` |
+| Pulizia | Rimossi i workflow upstream che richiedono il progetto GCP di Google (`ci-main`, `ci-pr`, `deploy-pr`, `cleanup`, `make-release`) | `.github/workflows/` |
 
-1. Ensure you have the following requirements:
-   - [Google Cloud project](https://cloud.google.com/resource-manager/docs/creating-managing-projects#creating_a_project).
-   - Shell environment with `gcloud`, `git`, and `kubectl`.
+Il diff con l'upstream è tutto in `platform/`, `docs/challenge/`, `src/frontend/` (4 file) e `.github/workflows/`: `git diff upstream/main --stat`.
 
-2. Clone the latest major version.
+## 3. Struttura del repository (parti nuove)
 
-   ```sh
-   git clone --depth 1 --branch v0 https://github.com/GoogleCloudPlatform/microservices-demo.git
-   cd microservices-demo/
+```
+platform/
+├── kind/cluster.yaml                 # cluster locale (nodo singolo)
+├── deploy/
+│   ├── base/                         # = kustomize/base upstream + patch di piattaforma
+│   ├── components/
+│   │   ├── kind-sizing/              # CPU request ridotte per il laptop
+│   │   └── observability/            # ServiceMonitor
+│   └── overlays/{dev,prod}/          # namespace, HTTPRoute, RBAC, HPA/PDB (prod), versione frontend
+├── addons/
+│   ├── values/                       # values Helm: metrics-server, kube-prometheus-stack, kyverno, argo-cd
+│   └── config/                       # Gateway, alert, dashboard, policy (sincronizzati da Argo CD)
+├── gitops/                           # AppProject + Application Argo CD
+├── krateo/                           # golden path: chart + CompositionDefinition + esempi
+└── scripts/                          # bootstrap, build, smoke test, release, rollback, chaos, rbac, krateo
+docs/challenge/                       # documentazione della challenge
+```
+
+## 4. Prerequisiti
+
+VM o host Linux (riferimento: Ubuntu 26.04 LTS su VMware Workstation) con **4 vCPU, 10 GB di RAM, 60 GB di disco**.
+
+1. **Docker Engine** (non Docker Desktop):
+   ```bash
+   # repository ufficiale Docker (https://docs.docker.com/engine/install/ubuntu/);
+   # se non supporta ancora la release Ubuntu in uso: sudo apt install docker.io
+   sudo usermod -aG docker "$USER"   # poi logout/login
    ```
-
-   The `--depth 1` argument skips downloading git history.
-
-3. Set the Google Cloud project and region and ensure the Google Kubernetes Engine API is enabled.
-
-   ```sh
-   export PROJECT_ID=<PROJECT_ID>
-   export REGION=us-central1
-   gcloud services enable container.googleapis.com \
-     --project=${PROJECT_ID}
+2. **Limiti inotify** (altrimenti kind fallisce con "too many open files"):
+   ```bash
+   echo -e "fs.inotify.max_user_watches=524288\nfs.inotify.max_user_instances=512" | sudo tee /etc/sysctl.d/99-kind.conf
+   sudo sysctl --system
    ```
-
-   Substitute `<PROJECT_ID>` with the ID of your Google Cloud project.
-
-4. Create a GKE cluster and get the credentials for it.
-
-   ```sh
-   gcloud container clusters create-auto online-boutique \
-     --project=${PROJECT_ID} --region=${REGION} \
-     --labels dev-tutorial=online-boutique
+3. **Utility**: `sudo apt install -y git curl jq openssl`
+4. **CLI** (kind, kubectl, helm, kustomize, kubeconform, argocd, k9s) in `~/.local/bin`, senza sudo:
+   ```bash
+   platform/scripts/install-tools.sh
    ```
+5. **Fork pubblico** di questo repository su GitHub: Argo CD legge da lì.
 
-   Creating the cluster may take a few minutes.
+## 5. Installazione
 
-5. Deploy Online Boutique to the cluster.
+```bash
+git clone https://github.com/<tuo-utente>/microservices-demo.git && cd microservices-demo
+platform/scripts/set-github-user.sh <tuo-utente>   # sostituisce il placeholder YOUR_GITHUB_USER
+git commit -am "chore: point platform to my fork" && git push
+platform/scripts/bootstrap.sh          # 15-25 minuti la prima volta (download immagini)
+```
 
-   ```sh
-   kubectl apply -f ./release/kubernetes-manifests.yaml
-   ```
+`bootstrap.sh` è idempotente: crea il cluster kind e avvia cloud-provider-kind (LoadBalancer + Gateway API). Poi installa con Helm metrics-server, kube-prometheus-stack, Kyverno e Argo CD, compila e carica l'immagine del frontend e genera i Secret Redis. Infine registra le Application Argo CD e aggiunge (con conferma) le voci in `/etc/hosts`. Da quel momento è **Git a guidare il cluster**.
 
-6. Wait for the pods to be ready.
+> Le versioni dei chart Helm non sono fissate (si installa l'ultima stabile). Dopo il primo run riuscito, fissarle con `KPS_VERSION`, `KYVERNO_VERSION`, `ARGOCD_VERSION` e `METRICS_SERVER_VERSION` per la riproducibilità (`helm list -A` mostra quelle installate).
 
-   ```sh
-   kubectl get pods
-   ```
+## 6. Verifica e test
 
-   After a few minutes, you should see the Pods in a `Running` state:
+```bash
+platform/scripts/smoke-test.sh dev     # home, prodotto, carrello, checkout, health, versione, metriche
+platform/scripts/smoke-test.sh prod
+platform/scripts/rbac-check.sh         # matrice permessi per persona (impersonation)
+```
 
-   ```
-   NAME                                     READY   STATUS    RESTARTS   AGE
-   adservice-76bdd69666-ckc5j               1/1     Running   0          2m58s
-   cartservice-66d497c6b7-dp5jr             1/1     Running   0          2m59s
-   checkoutservice-666c784bd6-4jd22         1/1     Running   0          3m1s
-   currencyservice-5d5d496984-4jmd7         1/1     Running   0          2m59s
-   emailservice-667457d9d6-75jcq            1/1     Running   0          3m2s
-   frontend-6b8d69b9fb-wjqdg                1/1     Running   0          3m1s
-   loadgenerator-665b5cd444-gwqdq           1/1     Running   0          3m
-   paymentservice-68596d6dd6-bf6bv          1/1     Running   0          3m
-   productcatalogservice-557d474574-888kr   1/1     Running   0          3m
-   recommendationservice-69c56b74d4-7z8r5   1/1     Running   0          3m1s
-   redis-cart-5f59546cdd-5jnqf              1/1     Running   0          2m58s
-   shippingservice-6ccc89f8fd-v686r         1/1     Running   0          2m58s
-   ```
+| Cosa | Come |
+|---|---|
+| Negozio | http://dev.boutique.local, http://boutique.local |
+| Argo CD | `kubectl -n argocd port-forward svc/argocd-server 8080:80` → http://localhost:8080 |
+| Grafana | `kubectl -n monitoring port-forward svc/kube-prometheus-stack-grafana 3000:80` → dashboard "Online Boutique - Overview" |
+| Prometheus | `kubectl -n monitoring port-forward svc/kube-prometheus-stack-prometheus 9090:9090` → `/alerts` |
 
-7. Access the web frontend in a browser using the frontend's external IP.
+## 7. Operazioni frequenti
 
-   ```sh
-   kubectl get service frontend-external | awk '{print $4}'
-   ```
+```bash
+platform/scripts/release.sh dev 1.1.0            # build + commit del tag + sync Argo CD + rollout
+SKIP_BUILD=1 platform/scripts/release.sh prod 1.1.0   # promozione della stessa immagine in prod
+platform/scripts/rollback.sh prod                # git revert dell'ultimo cambio all'overlay
+platform/scripts/rollback.sh dev --emergency     # kubectl rollout undo (senza Git)
+platform/scripts/chaos.sh list                   # scenari di guasto
+platform/scripts/create-secrets.sh --rotate      # rotazione password Redis
+platform/scripts/teardown.sh                     # rimuove tutto
+```
 
-   Visit `http://EXTERNAL_IP` in a web browser to access your instance of Online Boutique.
+Dettagli e diagnosi in [runbook](docs/challenge/runbook.md).
 
-8. Congrats! You've deployed the default Online Boutique. To deploy a different variation of Online Boutique (e.g., with Google Cloud Operations tracing, Istio, etc.), see [Deploy Online Boutique variations with Kustomize](#deploy-online-boutique-variations-with-kustomize).
+## 8. Pipeline CI
 
-9. Once you are done with it, delete the GKE cluster.
+`.github/workflows/platform-ci.yaml` si attiva su push e PR che toccano `platform/`, `src/frontend/` o `kustomize/`:
 
-   ```sh
-   gcloud container clusters delete online-boutique \
-     --project=${PROJECT_ID} --region=${REGION}
-   ```
+1. **validate**: shellcheck, yamllint, render di overlay e chart Krateo, `kubeconform -strict` con gli schemi dei CRD (Gateway API, Argo CD, Prometheus Operator, Kyverno), controllo che nessun Secret finisca in Git.
+2. **frontend**: `gofmt`, `go vet` e `go test -race`.
+3. **image**: build, scansione Trivy (blocca sulle CVE CRITICAL che hanno una correzione disponibile), push su `ghcr.io/<owner>/boutique-frontend` solo da `main`.
 
-   Deleting the cluster may take a few minutes.
+La CI **non fa deploy** e non ha credenziali del cluster: è Argo CD che legge da Git.
 
-## Additional deployment options
+## 9. Limiti noti
 
-- **Terraform**: [See these instructions](/terraform) to learn how to deploy Online Boutique using [Terraform](https://www.terraform.io/intro).
-- **Istio / Cloud Service Mesh**: [See these instructions](/kustomize/components/service-mesh-istio/README.md) to deploy Online Boutique alongside an Istio-backed service mesh.
-- **Non-GKE clusters (Minikube, Kind, etc)**: See the [Development guide](/docs/development-guide.md) to learn how you can deploy Online Boutique on non-GKE clusters.
-- **AI assistant using Gemini**: [See these instructions](/kustomize/components/shopping-assistant/README.md) to deploy a Gemini-powered AI assistant that suggests products to purchase based on an image.
-- **And more**: The [`/kustomize` directory](/kustomize) contains instructions for customizing the deployment of Online Boutique with other variations.
-
-## Documentation
-
-- [Development](/docs/development-guide.md) to learn how to run and develop this app locally.
-
-## Demos featuring Online Boutique
-
-- [Security hardening of the OnlineBoutique sample apps with the Docker Hardened Images (DHI)](https://medium.com/google-cloud/security-hardening-of-the-onlineboutique-sample-apps-with-docker-hardened-images-dhi-ca1fad348343)
-- [alpine, distroless or scratch?](https://medium.com/google-cloud/alpine-distroless-or-scratch-caac35250e0b)
-- [Platform Engineering in action: Deploy the Online Boutique sample apps with Score and Humanitec](https://medium.com/p/d99101001e69)
-- [The new Kubernetes Gateway API with Istio and Anthos Service Mesh (ASM)](https://medium.com/p/9d64c7009cd)
-- [Use Azure Redis Cache with the Online Boutique sample on AKS](https://medium.com/p/981bd98b53f8)
-- [Sail Sharp, 8 tips to optimize and secure your .NET containers for Kubernetes](https://medium.com/p/c68ba253844a)
-- [Deploy multi-region application with Anthos and Google cloud Spanner](https://medium.com/google-cloud/a2ea3493ed0)
-- [Use Google Cloud Memorystore (Redis) with the Online Boutique sample on GKE](https://medium.com/p/82f7879a900d)
-- [Use Helm to simplify the deployment of Online Boutique, with a Service Mesh, GitOps, and more!](https://medium.com/p/246119e46d53)
-- [How to reduce microservices complexity with Apigee and Anthos Service Mesh](https://cloud.google.com/blog/products/application-modernization/api-management-and-service-mesh-go-together)
-- [gRPC health probes with Kubernetes 1.24+](https://medium.com/p/b5bd26253a4c)
-- [Use Google Cloud Spanner with the Online Boutique sample](https://medium.com/p/f7248e077339)
-- [Seamlessly encrypt traffic from any apps in your Mesh to Memorystore (redis)](https://medium.com/google-cloud/64b71969318d)
-- [Strengthen your app's security with Cloud Service Mesh and Anthos Config Management](https://cloud.google.com/service-mesh/docs/strengthen-app-security)
-- [From edge to mesh: Exposing service mesh applications through GKE Ingress](https://cloud.google.com/architecture/exposing-service-mesh-apps-through-gke-ingress)
-- [Take the first step toward SRE with Cloud Operations Sandbox](https://cloud.google.com/blog/products/operations/on-the-road-to-sre-with-cloud-operations-sandbox)
-- [Deploying the Online Boutique sample application on Cloud Service Mesh](https://cloud.google.com/service-mesh/docs/onlineboutique-install-kpt)
-- [Anthos Service Mesh Workshop: Lab Guide](https://codelabs.developers.google.com/codelabs/anthos-service-mesh-workshop)
-- [KubeCon EU 2019 - Reinventing Networking: A Deep Dive into Istio's Multicluster Gateways - Steve Dake, Independent](https://youtu.be/-t2BfT59zJA?t=982)
-- Google Cloud Next'18 SF
-  - [Day 1 Keynote](https://youtu.be/vJ9OaAqfxo4?t=2416) showing GKE On-Prem
-  - [Day 3 Keynote](https://youtu.be/JQPOPV_VH5w?t=815) showing Stackdriver
-    APM (Tracing, Code Search, Profiler, Google Cloud Build)
-  - [Introduction to Service Management with Istio](https://www.youtube.com/watch?v=wCJrdKdD6UM&feature=youtu.be&t=586)
-- [Google Cloud Next'18 London – Keynote](https://youtu.be/nIq2pkNcfEI?t=3071)
-  showing Stackdriver Incident Response Management
-- [Microservices demo showcasing Go Micro](https://github.com/go-micro/demo)
+- Ambienti simulati con namespace sullo stesso cluster: nessun isolamento a livello di nodo o di control plane.
+- Redis usa `emptyDir`: il carrello si perde al riavvio del pod (come nell'upstream).
+- I Secret sono generati da uno script e non sono riconciliati da GitOps: in produzione si userebbero External Secrets o Sealed Secrets ([security](docs/challenge/security.md)).
+- Le metriche applicative coprono solo il frontend. Gli altri servizi espongono solo probe e log; il tracing OpenTelemetry è predisposto upstream ma non attivato.
+- Le CPU request sono ridotte per far stare due ambienti su 4 vCPU (`kind-sizing`): in produzione sarebbe un errore di capacity planning ([architettura](docs/challenge/architecture.md#capacity)).
