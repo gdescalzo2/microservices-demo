@@ -1,0 +1,15 @@
+# Registers the chart with Krateo core-provider. core-provider downloads the
+# chart, turns values.schema.json into a versioned CRD and starts a
+# Composition Dynamic Controller (CDC) that reconciles instances of it.
+# Publish the chart first (see docs/challenge/krateo.md, "PoC"):
+#   helm package platform/krateo/boutique-service
+#   helm push boutique-service-0.1.0.tgz oci://ghcr.io/YOUR_GITHUB_USER/charts
+apiVersion: core.krateo.io/v1alpha1
+kind: CompositionDefinition
+metadata:
+  name: boutique-service
+  namespace: krateo-system
+spec:
+  chart:
+    url: oci://ghcr.io/YOUR_GITHUB_USER/charts/boutique-service
+    version: 0.1.0

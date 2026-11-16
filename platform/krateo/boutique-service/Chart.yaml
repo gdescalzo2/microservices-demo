@@ -1,0 +1,11 @@
+apiVersion: v2
+name: boutique-service
+description: >-
+  Golden path "Online Boutique as a service": one instance = one Argo CD
+  Application that deploys the platform's Kustomize overlay into a dedicated
+  namespace, with ownership, routing and RBAC derived from a few inputs.
+  Packaged to be used as a Krateo Composition (values.schema.json -> CRD).
+type: application
+version: 0.1.0
+appVersion: "1.0.0"
+keywords: [krateo, golden-path, online-boutique, argocd]

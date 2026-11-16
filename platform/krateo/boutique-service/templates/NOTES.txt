@@ -1,0 +1,8 @@
+Online Boutique instance "{{ include "bs.appName" . }}" requested.
+
+  Namespace:  {{ include "bs.namespace" . }}
+  URL:        http://{{ include "bs.host" . }}
+  Owner:      {{ .Values.service.owner }} (tier {{ .Values.service.tier }})
+
+Prerequisite (platform team): Secret redis-auth in {{ include "bs.namespace" . }}
+(External Secrets in production; platform/scripts/create-secrets.sh locally).

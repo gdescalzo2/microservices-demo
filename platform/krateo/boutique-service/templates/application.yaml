@@ -1,0 +1,81 @@
+{{- $ns := include "bs.namespace" . -}}
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: {{ include "bs.appName" . }}
+  namespace: {{ .Values.argocd.namespace }}
+  labels:
+    app.kubernetes.io/managed-by: krateo
+    platform.example.com/owner: {{ .Values.service.owner }}
+    platform.example.com/tier: {{ .Values.service.tier }}
+    platform.example.com/environment: {{ .Values.environment }}
+  # Deleting the composition deletes the deployed workload too.
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: {{ .Values.argocd.project }}
+  source:
+    repoURL: {{ .Values.git.repoURL }}
+    targetRevision: {{ .Values.git.targetRevision }}
+    # The golden path IS the platform overlay: consumers get the same
+    # hardening, policies, probes and monitoring as the reference service.
+    path: platform/deploy/overlays/{{ .Values.environment }}
+    kustomize:
+      namespace: {{ $ns }}
+      images:
+        - boutique/frontend:{{ .Values.frontend.version }}
+      commonLabels:
+        platform.example.com/owner: {{ .Values.service.owner }}
+        platform.example.com/tier: {{ .Values.service.tier }}
+      labelWithoutSelector: true
+      patches:
+        - target:
+            kind: HTTPRoute
+            name: frontend
+          patch: |-
+            - op: replace
+              path: /spec/hostnames/0
+              value: {{ include "bs.host" . }}
+        {{- if eq .Values.environment "dev" }}
+        - target:
+            kind: RoleBinding
+            name: team-boutique-developer
+          patch: |-
+            - op: replace
+              path: /subjects/0/name
+              value: {{ .Values.service.owner }}
+        {{- else }}
+        - target:
+            kind: RoleBinding
+            name: team-boutique-viewer
+          patch: |-
+            - op: replace
+              path: /subjects/0/name
+              value: {{ .Values.service.owner }}
+            - op: replace
+              path: /subjects/1/name
+              value: {{ .Values.service.owner }}-oncall
+        - target:
+            kind: RoleBinding
+            name: team-boutique-oncall
+          patch: |-
+            - op: replace
+              path: /subjects/0/name
+              value: {{ .Values.service.owner }}-oncall
+        - target:
+            kind: HorizontalPodAutoscaler
+            name: frontend
+          patch: |-
+            - op: replace
+              path: /spec/maxReplicas
+              value: {{ include "bs.maxReplicas" . }}
+        {{- end }}
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: {{ $ns }}
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: {{ eq .Values.environment "prod" }}
+    syncOptions:
+      - PruneLast=true

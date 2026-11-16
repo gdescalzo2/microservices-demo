@@ -1,0 +1,18 @@
+# Inputs a consumer team fills in (Krateo form / Composition spec).
+# Everything else is decided by the platform (overlay, policies, monitoring).
+service:
+  name: team-a            # -> namespace boutique-<name>-<environment>
+  owner: team-a           # owning team = RBAC group + owner label
+  tier: bronze            # bronze | silver | gold  (prod autoscaling ceiling)
+environment: dev          # dev | prod  (selects the platform overlay)
+frontend:
+  version: 1.0.0          # image tag of boutique/frontend
+ingress:
+  host: ""                # default: <name>.<environment>.boutique.local
+git:
+  repoURL: https://github.com/YOUR_GITHUB_USER/microservices-demo.git
+  targetRevision: main
+# Platform-owned settings (not meant to be exposed in the consumer form)
+argocd:
+  namespace: argocd
+  project: boutique-selfservice

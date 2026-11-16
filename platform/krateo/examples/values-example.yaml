@@ -1,0 +1,10 @@
+service:
+  name: team-a
+  owner: team-a
+  tier: silver
+environment: prod
+frontend:
+  version: 1.1.0
+git:
+  repoURL: https://github.com/YOUR_GITHUB_USER/microservices-demo.git
+  targetRevision: main

@@ -1,0 +1,74 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "BoutiqueService",
+  "description": "Self-service instance of Online Boutique on the internal platform.",
+  "type": "object",
+  "required": ["service", "environment", "frontend", "git"],
+  "properties": {
+    "service": {
+      "type": "object",
+      "required": ["name", "owner", "tier"],
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "Short service name (lowercase, digits, dashes). Namespace will be boutique-<name>-<environment>.",
+          "pattern": "^[a-z][a-z0-9-]{1,28}[a-z0-9]$"
+        },
+        "owner": {
+          "type": "string",
+          "description": "Owning team: becomes the RBAC group and the platform.example.com/owner label.",
+          "pattern": "^[a-z][a-z0-9-]{1,40}$"
+        },
+        "tier": {
+          "type": "string",
+          "description": "Service tier: sets the production autoscaling ceiling (bronze=2, silver=4, gold=6 frontend replicas).",
+          "enum": ["bronze", "silver", "gold"],
+          "default": "bronze"
+        }
+      }
+    },
+    "environment": {
+      "type": "string",
+      "description": "Target environment: selects the platform overlay (dev: 1 replica, team may operate; prod: HA, read-only, self-heal).",
+      "enum": ["dev", "prod"],
+      "default": "dev"
+    },
+    "frontend": {
+      "type": "object",
+      "required": ["version"],
+      "properties": {
+        "version": {
+          "type": "string",
+          "description": "Frontend image version (semver).",
+          "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$",
+          "default": "1.0.0"
+        }
+      }
+    },
+    "ingress": {
+      "type": "object",
+      "properties": {
+        "host": {
+          "type": "string",
+          "description": "Public hostname. Empty = <name>.<environment>.boutique.local",
+          "pattern": "^$|^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$"
+        }
+      }
+    },
+    "git": {
+      "type": "object",
+      "required": ["repoURL", "targetRevision"],
+      "properties": {
+        "repoURL": {"type": "string", "description": "Git repository with the platform overlays.", "pattern": "^https://"},
+        "targetRevision": {"type": "string", "description": "Branch, tag or commit.", "default": "main"}
+      }
+    },
+    "argocd": {
+      "type": "object",
+      "properties": {
+        "namespace": {"type": "string", "default": "argocd"},
+        "project": {"type": "string", "default": "boutique-selfservice"}
+      }
+    }
+  }
+}

@@ -1,0 +1,23 @@
+# Guardrail for every self-service instance: may only deploy the platform
+# overlays, only into boutique-* namespaces, nothing cluster-wide except the
+# Namespace object itself.
+apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
+  name: boutique-selfservice
+  namespace: argocd
+spec:
+  description: Self-service Online Boutique instances created through Krateo
+  sourceRepos:
+    - https://github.com/YOUR_GITHUB_USER/microservices-demo.git
+  destinations:
+    - server: https://kubernetes.default.svc
+      namespace: "boutique-*"
+  clusterResourceWhitelist:
+    - group: ""
+      kind: Namespace
+  namespaceResourceBlacklist:
+    - group: ""
+      kind: ResourceQuota
+    - group: ""
+      kind: LimitRange
