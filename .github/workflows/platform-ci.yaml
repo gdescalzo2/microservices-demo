@@ -1,0 +1,191 @@
+# Platform CI for the challenge.
+#
+#   validate  -> lint scripts/YAML, render every Kustomize overlay and the
+#                Krateo chart, validate against Kubernetes + CRD schemas,
+#                guard against Secrets committed to Git
+#   frontend  -> go vet / go test / gofmt on the forked frontend
+#   image     -> build the frontend image, scan it (Trivy, blocking on
+#                fixable CRITICAL CVEs), push to GHCR on main only
+#
+# Deploy is NOT done here: Argo CD pulls from Git (GitOps). CI never holds
+# cluster credentials.
+#
+# Every third-party action is pinned to a full commit SHA (tag in comment):
+# after the March 2026 trivy-action tag-poisoning incident (CVE-2026-33634),
+# mutable tags are not an acceptable supply-chain risk.
+name: platform-ci
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "platform/**"
+      - "src/frontend/**"
+      - "kustomize/**"
+      - ".github/workflows/platform-ci.yaml"
+  pull_request:
+    paths:
+      - "platform/**"
+      - "src/frontend/**"
+      - "kustomize/**"
+      - ".github/workflows/platform-ci.yaml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: platform-ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  KUSTOMIZE_VERSION: v5.7.1
+  KUBECONFORM_VERSION: v0.8.0
+  CRD_SCHEMAS: https://raw.githubusercontent.com/datreeio/CRDs-catalog/main/{{.Group}}/{{.ResourceKind}}_{{.ResourceAPIVersion}}.json
+
+jobs:
+  validate:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install kustomize, kubeconform, yamllint
+        run: |
+          set -euo pipefail
+          mkdir -p "$HOME/bin"
+          curl -fsSL "https://github.com/kubernetes-sigs/kustomize/releases/download/kustomize%2F${KUSTOMIZE_VERSION}/kustomize_${KUSTOMIZE_VERSION}_linux_amd64.tar.gz" | tar xz -C "$HOME/bin"
+          curl -fsSL "https://github.com/yannh/kubeconform/releases/download/${KUBECONFORM_VERSION}/kubeconform-linux-amd64.tar.gz" | tar xz -C "$HOME/bin" kubeconform
+          echo "$HOME/bin" >> "$GITHUB_PATH"
+          pip install --quiet yamllint
+
+      - uses: azure/setup-helm@2f5e7bc67f1f9972ab16657bb795f36d8f04de0e # v5.1.0
+
+      - name: shellcheck
+        run: shellcheck -x -P SCRIPTDIR -s bash platform/scripts/*.sh
+
+      - name: yamllint
+        run: yamllint -c platform/.yamllint.yaml platform .github/workflows/platform-ci.yaml
+
+      - name: Render manifests
+        run: |
+          set -euo pipefail
+          mkdir -p rendered
+          kustomize build platform/deploy/overlays/dev  > rendered/dev.yaml
+          kustomize build platform/deploy/overlays/prod > rendered/prod.yaml
+          kustomize build platform/addons/config        > rendered/platform-config.yaml
+          cp platform/gitops/*.yaml rendered/
+          helm lint platform/krateo/boutique-service
+          helm template demo platform/krateo/boutique-service \
+            -f platform/krateo/examples/values-example.yaml > rendered/krateo-chart.yaml
+          wc -l rendered/*.yaml
+
+      - name: kubeconform (Kubernetes + CRD schemas, strict)
+        run: |
+          kubeconform -strict -summary -output pretty \
+            -schema-location default -schema-location "$CRD_SCHEMAS" \
+            rendered/*.yaml
+
+      - name: Guard - no Secrets in Git
+        run: |
+          if grep -nE '^kind: Secret$' rendered/*.yaml; then
+            echo "::error::Secret manifests found in rendered output: secrets must not live in Git"
+            exit 1
+          fi
+          echo "no Secret objects in rendered manifests"
+
+      - name: Guard - environments differ only where expected
+        run: |
+          # Fails if someone accidentally points both overlays to the same namespace.
+          test "$(grep -m1 '^  namespace:' rendered/dev.yaml)" != "$(grep -m1 '^  namespace:' rendered/prod.yaml)"
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: rendered-manifests
+          path: rendered/
+          retention-days: 7
+
+  frontend:
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: src/frontend
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: src/frontend/go.mod
+          cache-dependency-path: src/frontend/go.sum
+      - name: gofmt (files changed by the challenge)
+        run: test -z "$(gofmt -l metrics.go metrics_test.go main.go)"
+      - run: go vet ./...
+      - run: go test -race -count=1 ./...
+
+  image:
+    needs: [validate, frontend]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Compute image name and version
+        id: meta
+        run: |
+          owner="${GITHUB_REPOSITORY_OWNER,,}"
+          echo "image=ghcr.io/${owner}/boutique-frontend" >> "$GITHUB_OUTPUT"
+          echo "version=0.0.0-sha.${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
+
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+
+      - name: Build (load locally for scanning)
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: src/frontend
+          load: true
+          push: false
+          build-args: APP_VERSION=${{ steps.meta.outputs.version }}
+          tags: ${{ steps.meta.outputs.image }}:sha-${{ github.sha }}
+          labels: |
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Trivy scan (blocking on fixable CRITICAL)
+        uses: aquasecurity/trivy-action@57a97c7e7821a5776cebc9bb87c984fa69cba8f1 # v0.35.0
+        with:
+          version: v0.69.3            # known-good scanner version (see CVE-2026-33634)
+          image-ref: ${{ steps.meta.outputs.image }}:sha-${{ github.sha }}
+          severity: CRITICAL
+          ignore-unfixed: true
+          exit-code: "1"
+          format: table
+
+      - name: Trivy report (HIGH, informational)
+        if: always()
+        uses: aquasecurity/trivy-action@57a97c7e7821a5776cebc9bb87c984fa69cba8f1 # v0.35.0
+        with:
+          version: v0.69.3
+          image-ref: ${{ steps.meta.outputs.image }}:sha-${{ github.sha }}
+          severity: HIGH
+          ignore-unfixed: true
+          exit-code: "0"
+          format: table
+          skip-setup-trivy: true
+
+      - name: Login to GHCR
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Push
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        run: |
+          docker push "${{ steps.meta.outputs.image }}:sha-${{ github.sha }}"
+          docker tag "${{ steps.meta.outputs.image }}:sha-${{ github.sha }}" "${{ steps.meta.outputs.image }}:main"
+          docker push "${{ steps.meta.outputs.image }}:main"
+          echo "### Pushed \`${{ steps.meta.outputs.image }}:sha-${{ github.sha }}\`" >> "$GITHUB_STEP_SUMMARY"
