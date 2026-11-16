@@ -167,7 +167,16 @@ func main() {
 	handler = ensureSessionID(handler)                 // add session ID
 	handler = otelhttp.NewHandler(handler, "frontend") // add OTel tracing
 
-	log.Infof("starting server on %s:%s", addr, srvPort)
+	// Challenge: Prometheus metrics on a dedicated port (see metrics.go).
+	httpMetrics := newHTTPMetrics()
+	handler = httpMetrics.middleware(baseUrl, handler)
+	metricsPort := "9090"
+	if os.Getenv("METRICS_PORT") != "" {
+		metricsPort = os.Getenv("METRICS_PORT")
+	}
+	go serveMetrics(httpMetrics, addr, metricsPort, log.Infof)
+
+	log.WithField("version", version).Infof("starting server on %s:%s", addr, srvPort)
 	log.Fatal(http.ListenAndServe(addr+":"+srvPort, handler))
 }
 func initStats(log logrus.FieldLogger) {

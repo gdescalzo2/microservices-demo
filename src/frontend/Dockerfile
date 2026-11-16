@@ -27,9 +27,14 @@ COPY . .
 
 # Skaffold passes in debug-oriented compiler flags
 ARG SKAFFOLD_GO_GCFLAGS
-RUN GOOS=${TARGETOS} GOARCH=${TARGETARCH} CGO_ENABLED=0 go build -ldflags="-s -w" -gcflags="${SKAFFOLD_GO_GCFLAGS}" -o /go/bin/frontend .
+# Challenge: version injected at build time, exposed as metric + X-App-Version header
+ARG APP_VERSION=dev
+RUN GOOS=${TARGETOS} GOARCH=${TARGETARCH} CGO_ENABLED=0 go build -ldflags="-s -w -X main.version=${APP_VERSION}" -gcflags="${SKAFFOLD_GO_GCFLAGS}" -o /go/bin/frontend .
 
 FROM gcr.io/distroless/static
+ARG APP_VERSION=dev
+LABEL org.opencontainers.image.source="https://github.com/GoogleCloudPlatform/microservices-demo" \
+      org.opencontainers.image.version="${APP_VERSION}"
 WORKDIR /src
 COPY --from=builder /go/bin/frontend /src/server
 COPY ./templates ./templates
@@ -40,5 +45,5 @@ COPY ./static ./static
 # See https://golang.org/pkg/runtime/
 ENV GOTRACEBACK=single
 
-EXPOSE 8080
+EXPOSE 8080 9090
 ENTRYPOINT ["/src/server"]
