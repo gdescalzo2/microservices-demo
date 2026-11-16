@@ -1,0 +1,8 @@
+# Per-environment observability wiring. Alert rules and the Grafana dashboard
+# are platform-level (platform/addons/monitoring) because they are shared by
+# all environments and owned by the platform team.
+apiVersion: kustomize.config.k8s.io/v1alpha1
+kind: Component
+
+resources:
+  - servicemonitor-frontend.yaml

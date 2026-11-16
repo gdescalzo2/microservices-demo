@@ -1,0 +1,23 @@
+# Redis now requires a password, read from the "redis-auth" Secret.
+# The Secret is NOT in Git: platform/scripts/create-secrets.sh generates it
+# (see docs/challenge/security.md for the production alternative).
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: redis-cart
+spec:
+  template:
+    spec:
+      serviceAccountName: redis-cart
+      containers:
+        - name: redis
+          args:
+            - redis-server
+            - --requirepass
+            - $(REDIS_PASSWORD)
+          env:
+            - name: REDIS_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: redis-auth
+                  key: password

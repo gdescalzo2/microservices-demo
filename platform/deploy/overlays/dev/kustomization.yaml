@@ -1,0 +1,44 @@
+# DEV: one replica per service, light load, team can operate workloads.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: boutique-dev
+
+resources:
+  - namespace.yaml
+  - ../../base
+  - httproute.yaml
+  - rbac.yaml
+
+components:
+  - ../../components/kind-sizing
+  - ../../components/observability
+
+labels:
+  - pairs:
+      platform.example.com/environment: dev
+    includeSelectors: false
+    includeTemplates: true
+
+# Frontend version deployed in DEV. Changing this line (commit + push) is the
+# whole "release" for Argo CD. Used by the rollout demo (1.0.0 -> 1.1.0).
+images:
+  - name: boutique/frontend
+    newTag: 1.0.0
+
+patches:
+  # Strategic merge: env entries are matched by name (index-based JSON
+  # patches silently hit the wrong variable if upstream reorders env).
+  - patch: |-
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata:
+        name: loadgenerator
+      spec:
+        template:
+          spec:
+            containers:
+              - name: main
+                env:
+                  - name: USERS
+                    value: "3"

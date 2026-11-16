@@ -1,0 +1,11 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: boutique-dev
+  labels:
+    # Pod Security Admission: every workload must meet the "restricted" profile.
+    pod-security.kubernetes.io/enforce: restricted
+    pod-security.kubernetes.io/warn: restricted
+    # Allows HTTPRoutes in this namespace to attach to the shared Gateway.
+    platform.example.com/gateway-access: "true"
+    platform.example.com/environment: dev

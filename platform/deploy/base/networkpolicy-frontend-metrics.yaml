@@ -1,0 +1,22 @@
+# Documents intent explicitly: only Prometheus (namespace "monitoring") may
+# reach the frontend metrics port. Note: upstream's frontend policy already
+# allows all ingress (it is the public entry point), so this policy is
+# additive documentation today and becomes effective if that one is tightened.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: frontend-metrics-from-monitoring
+spec:
+  podSelector:
+    matchLabels:
+      app: frontend
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: monitoring
+      ports:
+        - port: 9090
+          protocol: TCP

@@ -1,0 +1,18 @@
+# Local sizing for a small kind cluster (single node, 4 vCPU shared by two
+# environments + monitoring + Argo CD + Kyverno).
+#
+# Upstream CPU *requests* add up to ~1.6 CPU per environment: on a 4 vCPU
+# node the scheduler would leave pods Pending. Requests are lowered to 20m;
+# limits and memory are untouched, so pods can still burst when CPU is free.
+# This trades scheduling guarantees for density: acceptable on a laptop, NOT
+# in production (see docs/challenge/architecture.md, "capacity").
+apiVersion: kustomize.config.k8s.io/v1alpha1
+kind: Component
+
+patches:
+  - target:
+      kind: Deployment
+    patch: |-
+      - op: replace
+        path: /spec/template/spec/containers/0/resources/requests/cpu
+        value: 20m

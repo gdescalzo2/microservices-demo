@@ -1,0 +1,18 @@
+# cartservice uses StackExchange.Redis: REDIS_ADDR is a full connection string
+# ("redis-cart:6379,password=..."), so it comes from the Secret as well.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: cartservice
+spec:
+  template:
+    spec:
+      containers:
+        - name: server
+          env:
+            - name: REDIS_ADDR
+              value: null
+              valueFrom:
+                secretKeyRef:
+                  name: redis-auth
+                  key: connection-string

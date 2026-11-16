@@ -1,0 +1,17 @@
+# Separate Service for the metrics port: the public HTTPRoute only targets the
+# "frontend" Service (port 80), so /metrics is never reachable from outside.
+apiVersion: v1
+kind: Service
+metadata:
+  name: frontend-metrics
+  labels:
+    app: frontend
+    app.kubernetes.io/component: metrics
+spec:
+  type: ClusterIP
+  selector:
+    app: frontend
+  ports:
+    - name: metrics
+      port: 9090
+      targetPort: metrics

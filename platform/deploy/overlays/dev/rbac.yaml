@@ -1,0 +1,46 @@
+# Human access for the application team in DEV: can operate workloads
+# (restart, rollback, scale, port-forward, logs) but cannot read Secrets.
+# Groups come from the cluster's OIDC provider; locally, impersonate with
+#   kubectl auth can-i --as=alice --as-group=team-boutique ...
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: boutique-developer
+rules:
+  - apiGroups: [""]
+    resources: [pods, services, endpoints, configmaps, events, serviceaccounts]
+    verbs: [get, list, watch]
+  - apiGroups: [""]
+    resources: [pods]
+    verbs: [delete]
+  - apiGroups: [""]
+    resources: [pods/log]
+    verbs: [get]
+  - apiGroups: [""]
+    resources: [pods/portforward]
+    verbs: [create]
+  - apiGroups: [apps]
+    resources: [deployments, replicasets]
+    verbs: [get, list, watch, patch, update]
+  - apiGroups: [apps]
+    resources: [deployments/scale]
+    verbs: [get, patch, update]
+  - apiGroups: [networking.k8s.io]
+    resources: [networkpolicies]
+    verbs: [get, list, watch]
+  - apiGroups: [gateway.networking.k8s.io]
+    resources: [httproutes]
+    verbs: [get, list, watch]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: team-boutique-developer
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: boutique-developer
+subjects:
+  - apiGroup: rbac.authorization.k8s.io
+    kind: Group
+    name: team-boutique

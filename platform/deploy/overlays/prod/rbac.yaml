@@ -1,0 +1,76 @@
+# Human access in PROD.
+# - team-boutique: read-only (no Secrets, no exec, no changes). Changes go
+#   through Git + Argo CD only.
+# - team-boutique-oncall: may additionally restart/rollback/scale Deployments
+#   during an incident (emergency path; must be followed by a Git commit,
+#   otherwise Argo CD self-heal reverts it - see runbook).
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: boutique-viewer
+rules:
+  - apiGroups: [""]
+    resources: [pods, services, endpoints, configmaps, events, serviceaccounts]
+    verbs: [get, list, watch]
+  - apiGroups: [""]
+    resources: [pods/log]
+    verbs: [get]
+  - apiGroups: [apps]
+    resources: [deployments, replicasets]
+    verbs: [get, list, watch]
+  - apiGroups: [autoscaling]
+    resources: [horizontalpodautoscalers]
+    verbs: [get, list, watch]
+  - apiGroups: [policy]
+    resources: [poddisruptionbudgets]
+    verbs: [get, list, watch]
+  - apiGroups: [networking.k8s.io]
+    resources: [networkpolicies]
+    verbs: [get, list, watch]
+  - apiGroups: [gateway.networking.k8s.io]
+    resources: [httproutes]
+    verbs: [get, list, watch]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: boutique-oncall
+rules:
+  - apiGroups: [apps]
+    resources: [deployments]
+    verbs: [patch]
+  - apiGroups: [apps]
+    resources: [deployments/scale]
+    verbs: [get, patch, update]
+  - apiGroups: [""]
+    resources: [pods]
+    verbs: [delete]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: team-boutique-viewer
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: boutique-viewer
+subjects:
+  - apiGroup: rbac.authorization.k8s.io
+    kind: Group
+    name: team-boutique
+  - apiGroup: rbac.authorization.k8s.io
+    kind: Group
+    name: team-boutique-oncall
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: team-boutique-oncall
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: boutique-oncall
+subjects:
+  - apiGroup: rbac.authorization.k8s.io
+    kind: Group
+    name: team-boutique-oncall

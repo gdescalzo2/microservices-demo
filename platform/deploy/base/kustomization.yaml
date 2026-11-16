@@ -1,0 +1,68 @@
+# Platform base for Online Boutique.
+#
+# Reuses the upstream Kustomize base unchanged (../../../kustomize/base) and
+# layers the platform concerns on top: single entry point via Gateway API,
+# Redis authentication from a Secret, hardening, network policies, metrics.
+# Environment-specific settings live in ../overlays/{dev,prod}.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+  - ../../../kustomize/base
+  - redis-serviceaccount.yaml
+  - frontend-metrics-service.yaml
+  - networkpolicy-frontend-metrics.yaml
+
+components:
+  # Upstream component: default deny-all + one fine-grained policy per service.
+  - ../../../kustomize/components/network-policies
+
+labels:
+  - pairs:
+      app.kubernetes.io/part-of: online-boutique
+      app.kubernetes.io/managed-by: argocd
+      platform.example.com/owner: team-boutique
+    includeSelectors: false
+    includeTemplates: true
+
+images:
+  # Our fork's frontend (Prometheus metrics + version header). Built by
+  # platform/scripts/build-frontend.sh and side-loaded into kind, or pushed to
+  # GHCR by CI. Overlays pin the tag.
+  - name: us-central1-docker.pkg.dev/online-boutique-ci/microservices-demo/frontend
+    newName: boutique/frontend
+    newTag: 1.0.0
+  # Upstream uses the mutable "redis:alpine" tag: pin a major version.
+  - name: redis
+    newTag: 8-alpine
+
+# Declare replicas explicitly: Argo CD can only detect (and self-heal) drift
+# on fields that exist in Git. Without this, "kubectl scale --replicas=0" on
+# redis-cart would go unnoticed. The frontend is left out on purpose: in prod
+# its replica count belongs to the HPA.
+replicas:
+  - {name: adservice, count: 1}
+  - {name: cartservice, count: 1}
+  - {name: checkoutservice, count: 1}
+  - {name: currencyservice, count: 1}
+  - {name: emailservice, count: 1}
+  - {name: loadgenerator, count: 1}
+  - {name: paymentservice, count: 1}
+  - {name: productcatalogservice, count: 1}
+  - {name: recommendationservice, count: 1}
+  - {name: redis-cart, count: 1}
+  - {name: shippingservice, count: 1}
+
+patches:
+  # One entry point only: the Gateway/HTTPRoute. Drop the upstream LoadBalancer.
+  - path: patches/delete-frontend-external.yaml
+
+  # Hardening for every workload: no API token (no service calls the K8s API)
+  # and seccomp RuntimeDefault, which makes all pods PSA "restricted" compliant.
+  - path: patches/pod-hardening.yaml
+    target:
+      kind: Deployment
+
+  - path: patches/frontend.yaml
+  - path: patches/redis-auth.yaml
+  - path: patches/cartservice-redis-auth.yaml
