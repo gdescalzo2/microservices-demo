@@ -20,16 +20,17 @@ grafana:
     datasources:
       alertmanager:
         enabled: false    # Alertmanager is disabled: the datasource would point nowhere
-  # Only the Prometheus datasource is used. Grafana 13 registers ~20 bundled
-  # plugins at start (~45s) and runs most datasources as separate backend
-  # processes: disabling the unused ones cuts startup CPU and memory.
+  # Only the Prometheus datasource is used. Grafana 13 registered 21 bundled
+  # plugins at start (43s in the log) and ran ~10 datasource backends as
+  # separate processes: disabling the unused ones cuts startup CPU and memory.
   grafana.ini:
     plugins:
       preinstall_disabled: true
       disable_plugins: "cloudwatch,elasticsearch,grafana-postgresql-datasource,grafana-pyroscope-datasource,influxdb,jaeger,loki,mssql,mysql,opentsdb,stackdriver,tempo,zipkin,grafana-pyroscope-app,grafana-lokiexplore-app,grafana-exploretraces-app,grafana-advisor-app"
-  # Grafana 13 sits at ~250Mi during first start: with a 256Mi limit the Go GC
-  # thrashes (2+ CPU), startup exceeds the liveness window and the pod loops.
-  # Measured ~465Mi steady with all bundled plugins: 640Mi leaves headroom.
+  # Measured on first start with a 256Mi limit: grafana container at 250Mi and
+  # 2.2 CPU, killed by liveness before serving (likely GC pressure at the
+  # limit). With the plugins above disabled: 344Mi container, 135m CPU.
+  # 640Mi leaves headroom over that.
   resources:
     requests: {cpu: 20m, memory: 256Mi}
     limits: {memory: 640Mi}

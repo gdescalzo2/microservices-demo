@@ -5,7 +5,7 @@
 # (e.g. emailservice: 3 x 5s, no initial delay). The kubelet then kills the
 # container, the restart burns more CPU, and the whole node degrades.
 # Observed on the first real bootstrap: emailservice and recommendationservice
-# in CrashLoopBackOff (25 restarts, exit 137) in both namespaces.
+# in CrashLoopBackOff (23-25 restarts, exit 137) in both namespaces.
 #
 # A startup probe gives up to 150s (30 x 5s) to come up; liveness and
 # readiness only start once it succeeds, so steady-state behaviour is the
