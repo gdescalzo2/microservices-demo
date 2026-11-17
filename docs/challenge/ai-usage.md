@@ -133,6 +133,14 @@ The next entries come from the **first real bootstrap** in the VM (Ubuntu 26.04,
 - *Verification of the fixes*: dev then prod, with the expected counters per environment and no process left behind. A **negative test** with an orphan dev port-forward now fails (exit 1). A first attempt at the negative test was itself invalid: `http.server` held only 127.0.0.1, so `kubectl` bound `[::1]` and the check legitimately passed. The RBAC matrix now matches `security.md` exactly.
 - *Lesson*: tests need testing. A check that passes must be shown to fail when the condition is false, and the scenario used to show it must match the real failure.
 
+**3.14 A functional change filed under `docs:`.**
+- *What happened*: commit `563672cb` ("docs: separate measurements from inferences in comments") changed four files with comments or documentation only, and one admission policy: the autogen controllers of `require-requests-limits` gained `jobs` and `cronjobs`. Argo CD applied it to the cluster. The `docs:` type declared "no behaviour change", which was false for that file. The agent noticed only **after** the push.
+- *Why it matters*: a reviewer skims `docs:` commits; a search for when the policy changed (`git log` filtered on `fix`/`feat`) would miss it; reverting the policy change would also revert unrelated comment fixes; tools that build changelogs from commit types would misreport it.
+- *Cause*: the change came from a list of "precision" fixes (the migration had claimed the same coverage as before, which was not true for Jobs and CronJobs), and the commit type was chosen from the **reason** for the fix instead of its **effect** on the system.
+- *First reaction, wrong*: the agent proposed leaving it as it was, because rewriting published history is worse than the error. That presented one trade-off as the only option, and it was a decision for the operator. The operator disagreed.
+- *Fix, chosen by the operator from three options* (rewrite with force push / corrective commits / document only): no history rewrite. `2f069040` removes only the policy line from the state of `563672cb`, and `f5c9136e` re-applies it as `fix(policies):`. The two commits and this entry went in **one push**, so Argo CD synced only the final revision: the intermediate state was never applied to the cluster, and the final content equals `563672cb`. `563672cb` keeps its wrong title; the next commit names it explicitly.
+- *Lesson*: before every push, read `git show --stat` for each commit and ask "which of these files changes behaviour?". The commit type describes the effect, not the motivation. When an error is found after the fact, present the options to the operator; do not pick one by preference.
+
 ## 4. Troubleshooting case with AI
 
 Run on 2026-11-17 in the VM, with Claude Code operating the cluster directly (kubectl, Prometheus API), scenario `chaos.sh netpol-typo dev`.
