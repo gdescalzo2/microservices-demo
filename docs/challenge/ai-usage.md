@@ -124,6 +124,15 @@ The next entries come from the **first real bootstrap** in the VM (Ubuntu 26.04,
 - *Fix*: `destination.namespace: monitoring`, used only as the default for namespaced resources without one (they all set it explicitly).
 - *Lesson*: another rule that exists only at runtime (Argo CD admission), invisible to schema validation.
 
+**3.13 Three wrong results from the verification scripts themselves.**
+- *What happened*: the first runs of `smoke-test.sh` and `rbac-check.sh` on the cluster produced three wrong answers. None of them was a platform bug.
+  1. **Checkout 422**: the test card was `4432-8015-6152-0454`. The frontend validator (`go-playground/validator` `credit_card`) accepts digits only; the upstream form uses `4432801561520454`. The `/metrics` counters gave the clue: the load generator's checkouts returned 200, ours 422.
+  2. **False positive on prod metrics**: the prod run printed exactly the dev counters, **including two 422s that prod never received**. The port-forward was started through the `k()` function with `&`. A backgrounded function runs in a subshell, so `$!` was the subshell and cleanup orphaned `kubectl`. The orphan kept port 19090, the next port-forward failed silently, and the check read the **previous environment**.
+  3. **Wrong RBAC matrix**: `kubectl auth can-i create pods/portforward` reads `pods/portforward` as TYPE/NAME (a pod named "portforward"), not as a subresource. Port-forward in dev showed `no` although the Role grants it, and "read logs" showed `yes` only because `get pods` is allowed.
+- *Fix*: (1) the upstream card value; (2) `kubectl` started directly, plus a check that the port-forward process is alive, with the informational output printed only in that case; (3) `--subresource` for logs, exec and port-forward.
+- *Verification of the fixes*: dev then prod, with the expected counters per environment and no process left behind. A **negative test** with an orphan dev port-forward now fails (exit 1). A first attempt at the negative test was itself invalid: `http.server` held only 127.0.0.1, so `kubectl` bound `[::1]` and the check legitimately passed. The RBAC matrix now matches `security.md` exactly.
+- *Lesson*: tests need testing. A check that passes must be shown to fail when the condition is false, and the scenario used to show it must match the real failure.
+
 ## 4. Troubleshooting case with AI
 
 > To be filled in during the run in the VM with Claude Code. Recommended scenario: `chaos.sh netpol-typo dev`. It is the most instructive one, because every pod stays `Ready` and only checkout fails.
