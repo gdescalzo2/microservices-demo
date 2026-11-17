@@ -43,7 +43,7 @@ t_cart()     { c "$BASE/cart" | grep -i sunglasses >/dev/null; }
 t_checkout() {
   c -L -d email=someone@example.com -d street_address='1600 Amphitheatre Parkway' -d zip_code=94043 \
     -d city='Mountain View' -d state=CA -d country='United States' \
-    -d credit_card_number=4432-8015-6152-0454 -d credit_card_expiration_month=1 \
+    -d credit_card_number=4432801561520454 -d credit_card_expiration_month=1 \
     -d credit_card_expiration_year=2039 -d credit_card_cvv=672 \
     "$BASE/cart/checkout" | grep 'Your order is complete' >/dev/null
 }
@@ -61,11 +61,19 @@ if [[ -n "$VERSION" ]]; then ok "X-App-Version: $VERSION"; PASS=$((PASS+1)); els
 
 step "Metrics endpoint (not exposed by the Gateway)"
 check "/metrics NOT reachable through the Gateway" t_no_public_metrics
-k -n "$NS" port-forward svc/frontend-metrics 19090:9090 >/dev/null 2>&1 & PF_PID=$!
+# kubectl directly, not through the k() function: a backgrounded function runs
+# in a subshell, $! would be the subshell and cleanup would orphan kubectl.
+# An orphan keeps the port, the next run's port-forward fails silently and
+# the check reads the metrics of the *previous* environment (seen for real).
+kubectl --context "$KUBE_CONTEXT" -n "$NS" port-forward svc/frontend-metrics 19090:9090 >/dev/null 2>&1 & PF_PID=$!
 sleep 3
-t_metrics() { curl -s localhost:19090/metrics | grep '^boutique_frontend_http_requests_total' >/dev/null; }
+t_pf_alive() { kill -0 "$PF_PID" 2>/dev/null; }
+t_metrics() { t_pf_alive && curl -s localhost:19090/metrics | grep '^boutique_frontend_http_requests_total' >/dev/null; }
+check "port-forward to $NS/frontend-metrics is running (port 19090 free)" t_pf_alive
 check "frontend-metrics exposes boutique_frontend_http_requests_total" t_metrics
-curl -s localhost:19090/metrics | grep -E '^boutique_frontend_(build_info|http_requests_total\{method="POST",route="/cart/checkout")' | sed 's/^/    /' || true
+if t_pf_alive; then
+  curl -s localhost:19090/metrics | grep -E '^boutique_frontend_(build_info|http_requests_total\{method="POST",route="/cart/checkout")' | sed 's/^/    /' || true
+fi
 
 echo
 if (( FAIL == 0 )); then echo "${C_GREEN}SMOKE TEST $ENV: PASS ($PASS checks)${C_OFF}"; else echo "${C_RED}SMOKE TEST $ENV: FAIL ($FAIL of $((PASS+FAIL)) checks failed)${C_OFF}"; exit 1; fi
