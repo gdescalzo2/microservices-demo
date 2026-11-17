@@ -115,8 +115,10 @@ count by (version) (boutique_frontend_build_info{namespace="boutique-prod"})
 
 Checkout calls cart, catalog, currency, shipping and payment. Email and cart-emptying errors are tolerated.
 
+Start from the **frontend** log: checkoutservice returns the error to its caller and does not log it, so its own log shows only `[PlaceOrder]` lines.
+
 ```bash
-k -n $NS logs deploy/checkoutservice --since=10m | grep -iE 'error|fail|warn' | tail
+k -n $NS logs deploy/frontend --since=10m | grep -i checkout | grep -iE 'error|fail' | tail -3
 #   "failed to charge card"  -> paymentservice
 #   "shipping error"         -> shippingservice
 #   "failed to get user cart"/"cart failure" -> cartservice / redis
@@ -125,7 +127,9 @@ k -n $NS get networkpolicy                                   # any recent change
 k -n argocd get app $APP                                      # OutOfSync = someone touched the cluster
 ```
 
-If every pod is `Running`/`Ready` but calls time out, the first hypothesis is the **network**: a NetworkPolicy, or a Service with the wrong selector.
+If every pod is `Running`/`Ready` but calls time out (`dial tcp <ClusterIP>:<port>: i/o timeout`), the first hypothesis is the **network**: a NetworkPolicy, or a Service with the wrong selector.
+
+A broken NetworkPolicy does **not** cut connections that already exist: gRPC keeps long-lived connections, so the fault can stay invisible until the caller restarts, for example during an unrelated deploy. "It broke after the deploy" does not prove the deploy is the cause: check `k -n argocd get app $APP` for drift and the NetworkPolicy history.
 
 ```bash
 k -n $NS get networkpolicy paymentservice -o jsonpath='{.spec.ingress}' | jq

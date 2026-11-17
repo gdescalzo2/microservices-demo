@@ -6,7 +6,9 @@
 #        platform/scripts/chaos.sh list
 #        platform/scripts/chaos.sh restore [dev|prod]   # resync from Git
 #
-# DEV has self-heal off, so the fault stays until you fix it.
+# DEV has self-heal off, so the fault stays until you fix it OR until the next
+# commit reaches main: auto-sync then re-applies Git and silently removes it
+# (seen for real). Do not push while a scenario is running.
 # PROD has self-heal on: Argo CD reverts the fault by itself (worth showing!).
 # shellcheck source=lib.sh
 source "$(dirname "$0")/lib.sh"
@@ -45,8 +47,14 @@ EOF
     step "[$NS] NetworkPolicy paymentservice: allow from app=checkout-service (typo, the real label is checkoutservice)"
     k -n "$NS" patch networkpolicy paymentservice --type=json \
       -p '[{"op":"replace","path":"/spec/ingress/0/from/0/podSelector/matchLabels/app","value":"checkout-service"}]'
-    ok "injected. Place an order in the shop (or run smoke-test.sh $ENV), then:"
-    echo "    kubectl -n $NS logs deploy/frontend --since=5m | grep -i checkout | tail -3"
+    # kindnet does not cut existing connections and gRPC keeps them open: without
+    # a restart checkout keeps working on the old connection (seen for real).
+    # The restart plays the part of "the next deploy", which in real life is
+    # when this kind of fault surfaces.
+    k -n "$NS" rollout restart deploy/checkoutservice >/dev/null
+    k -n "$NS" rollout status deploy/checkoutservice --timeout=120s >/dev/null
+    ok "injected (checkoutservice restarted to drop its existing connection). Place an order (or run smoke-test.sh $ENV), then:"
+    echo "    kubectl -n $NS logs deploy/frontend --since=5m | grep -i checkout | grep -iE 'error|fail' | tail -3"
     echo "    kubectl -n $NS logs deploy/checkoutservice --since=5m | tail -5"
     echo "    kubectl -n $NS get networkpolicy paymentservice -o yaml"
     ;;

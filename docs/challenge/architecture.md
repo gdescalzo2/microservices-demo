@@ -163,7 +163,7 @@ flowchart TB
 | Namespace | `boutique-dev` | `boutique-prod` |
 | Host | dev.boutique.local | boutique.local |
 | Frontend | 1 replica | HPA 2–4 (CPU 80%), PDB `minAvailable: 1` |
-| Argo CD | auto-sync, **self-heal off** (experiments allowed) | auto-sync, **self-heal on** (drift is reverted) |
+| Argo CD | auto-sync, **self-heal off** (experiments allowed until the next commit to `main`, which re-syncs and removes them) | auto-sync, **self-heal on** (drift is reverted) |
 | Team | operate (restart, rollback, scale, logs, port-forward) | read-only; on-call: restart/rollback/scale |
 | Load | 3 Locust users | 5 Locust users |
 

@@ -109,11 +109,13 @@ platform/scripts/chaos.sh netpol-typo dev
 # in the browser: an order on dev.boutique.local fails (or: smoke-test.sh dev -> checkout FAIL)
 ```
 
+> Do not push to `main` during the scenario: dev auto-sync would re-apply Git and silently remove the fault. The script restarts checkoutservice on purpose: an existing gRPC connection is not cut by the new policy, so without the restart orders would keep working (worth one sentence in the demo: in real life this kind of fault surfaces on the *next* deploy).
+
 Live diagnosis, following [runbook §2.2](runbook.md#rb-checkout):
 
 1. `kubectl -n boutique-dev get pods` → everything Running and Ready: *"it is not a pod problem"*.
 2. Grafana or the metric: 5xx only on `/cart/checkout` → *"the problem is in a checkout backend"*.
-3. `kubectl -n boutique-dev logs deploy/checkoutservice --since=5m` → error towards payment.
+3. `kubectl -n boutique-dev logs deploy/frontend --since=5m | grep -i checkout | grep -iE 'error|fail'` → `failed to charge card ... dial tcp <paymentservice IP>:50051: i/o timeout` (checkoutservice does not log the error, it returns it to the frontend). Lines with `code = Canceled desc = context canceled` are the same failure seen from a client that gave up first.
 4. `kubectl -n argocd get app boutique-dev` → **OutOfSync**: someone changed the cluster.
 5. `kubectl -n boutique-dev get networkpolicy paymentservice -o jsonpath='{.spec.ingress}'` → `checkout-service` instead of `checkoutservice`.
 6. **Use of AI (point 11)**: paste the symptom and outputs into Claude Code with the prompt from [ai-usage §4](ai-usage.md#4-troubleshooting-case-with-ai). Compare the hypotheses it proposes with the ones made by hand.
