@@ -11,9 +11,19 @@ grafana:
       label: grafana_dashboard
       labelValue: "1"
       searchNamespace: ALL
+  # Only the Prometheus datasource is used. Grafana 13 registers ~20 bundled
+  # plugins at start (~45s) and runs most datasources as separate backend
+  # processes: disabling the unused ones cuts startup CPU and memory.
+  grafana.ini:
+    plugins:
+      preinstall_disabled: true
+      disable_plugins: "cloudwatch,elasticsearch,grafana-postgresql-datasource,grafana-pyroscope-datasource,influxdb,jaeger,loki,mssql,mysql,opentsdb,stackdriver,tempo,zipkin,grafana-pyroscope-app,grafana-lokiexplore-app,grafana-exploretraces-app,grafana-advisor-app"
+  # Grafana 13 sits at ~250Mi during first start: with a 256Mi limit the Go GC
+  # thrashes (2+ CPU), startup exceeds the liveness window and the pod loops.
+  # Measured ~465Mi steady with all bundled plugins: 640Mi leaves headroom.
   resources:
-    requests: {cpu: 20m, memory: 128Mi}
-    limits: {memory: 256Mi}
+    requests: {cpu: 20m, memory: 256Mi}
+    limits: {memory: 640Mi}
 
 prometheus:
   prometheusSpec:
