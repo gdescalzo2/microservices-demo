@@ -135,19 +135,27 @@ The next entries come from the **first real bootstrap** in the VM (Ubuntu 26.04,
 
 ## 4. Troubleshooting case with AI
 
-> To be filled in during the run in the VM with Claude Code. Recommended scenario: `chaos.sh netpol-typo dev`. It is the most instructive one, because every pod stays `Ready` and only checkout fails.
+Run on 2026-11-17 in the VM, with Claude Code operating the cluster directly (kubectl, Prometheus API), scenario `chaos.sh netpol-typo dev`.
+
+> **Bias, stated up front**: the agent had read `chaos.sh` before the run, so it knew which fault was injected. The diagnosis below follows runbook §2.2 starting from the symptoms only, but it is **not a blind test**. A credible follow-up: the operator injects a scenario without telling the agent which one.
 
 | | |
 |---|---|
-| **Observed symptom** | _(e.g. failed order, BoutiqueCheckoutFailing alert)_ |
-| **Input given to the AI** | _(output of `get pods`, frontend and checkout logs, events; never Secrets)_ |
-| **Prompt** | _see below_ |
-| **Proposed hypotheses** | _(list, ordered by likelihood)_ |
-| **Proposed verification commands** | _(which were run, which were rejected and why)_ |
-| **Root cause identified** | _ |
-| **Fix** | _(through Git or sync, not kubectl edit)_ |
-| **Verification** | _(smoke test, metric back to 0, alert resolved)_ |
-| **Value** | _(time to diagnosis; what I would have done without AI)_ |
+| **Observed symptom** | `POST /cart/checkout` → **500** (smoke test), every pod `Running`/`Ready`, then **`BoutiqueCheckoutFailing` firing** for `boutique-dev` (active 23:53:50, firing about 1 minute later as per `for: 1m`). The rest of the shop worked. |
+| **Input given to the AI** | No pasted output: the agent ran the runbook commands itself (pod status, frontend and checkoutservice logs, NetworkPolicies, Argo CD status, labels, Prometheus alerts). No Secrets read or printed. |
+| **Prompt** | The operator's instruction was only "proceed with netpol-typo". The working rules from the handover applied: symptom → 2–3 hypotheses ordered by likelihood → read-only checks → fix only through Git. |
+| **Proposed hypotheses** | Two rounds were needed, because the fault **did not produce a symptom at first** (see "What the run taught"). On the real symptom: (1) network: NetworkPolicy or Service selector, since pods were healthy and the error was a dial timeout; (2) paymentservice itself unhealthy; (3) a recent change to the payment path. The evidence pointed at (1) immediately. |
+| **Proposed verification commands** | Run, all read-only: `logs deploy/frontend` (→ `failed to charge card ... dial tcp 10.96.100.234:50051: i/o timeout`), `get pods` (all Ready), `get svc paymentservice` (the IP in the error), `get app boutique-dev` (OutOfSync, **only** `NetworkPolicy/paymentservice`), `get networkpolicy paymentservice -o jsonpath='{.spec.ingress}'`, `get pods -l app=checkoutservice --show-labels`. Not used: `kubectl debug` on the distroless pod (PSA `restricted` would need `--profile=restricted`); temporary labelled test pods were used instead (below). |
+| **Root cause identified** | Ingress of `paymentservice` allowed `app=checkout-service` while the pods are labelled `app=checkoutservice`. It was manual drift from Git, flagged by Argo CD. Time from the first 500 to the root cause: about **40 seconds** (23:52:49 → 23:53:30). |
+| **Fix** | `chaos.sh restore dev` = Argo CD sync from Git (23:54:59). No `kubectl edit`. |
+| **Verification** | NetworkPolicy back to `app=checkoutservice`; smoke test dev **PASS (11 checks)** at 23:55:16; 5xx rate back to **0**; **alert resolved by itself** at 23:59:56 (the rule uses a 5-minute rate window). |
+| **Value** | The runbook path itself was short; the value was in what did **not** go as expected. The agent did not accept "the checkout works, so the scenario is broken" and separated three explanations with evidence. Without the AI I would probably have concluded that kindnet does not enforce NetworkPolicies and lost time there. |
+
+**What the run taught (three real findings):**
+
+1. **The first injection was silently undone by Argo CD.** In dev `selfHeal` is off, but `automated` sync is on, and Argo CD synced 2 seconds after the injection because a new commit had just reached `main` (an unrelated monitoring fix). With `automated` + `selfHeal: false`, manual drift in dev survives only **until the next commit to `main`**, not "until you fix it". The `chaos.sh` comment was wrong and is fixed. The demo must not push during a chaos scenario.
+2. **With the fault active, checkout still worked.** Hypotheses: (a) the existing gRPC connection checkout → payment survives the new policy; (b) kindnet does not enforce NetworkPolicies; (c) another policy allows the traffic. (c) was ruled out by listing the policies that select paymentservice (`deny-all` + `paymentservice` only). To separate (a) from (b), temporary PSA-compliant pods labelled `app=checkoutservice` opened **new** connections: `shippingservice:50051` **OPEN**, `paymentservice:50051` **BLOCKED**. So kindnet enforces, selectively, and (b) is ruled out. A pod labelled with the typo could not even resolve DNS (default-deny egress), which confirms enforcement but was useless as a positive control. Restarting checkoutservice (what any later deploy would do) produced the 500 at once, which confirms (a). **Lesson for operations**: a broken NetworkPolicy can stay invisible for hours and surface on an unrelated restart. "It broke after the deploy" does not mean "the deploy broke it".
+3. **The runbook sent the operator to the wrong log first.** `checkoutservice` does not log the failure; it returns it to the caller. Only the **frontend** log has `failed to charge card ... i/o timeout`. Runbook §2.2 now starts from the frontend log and mentions long-lived connections.
 
 A template prompt that keeps the AI to diagnosis:
 
@@ -177,12 +185,12 @@ An honest list of what static validation cannot guarantee. Tick them during the 
 
 - [x] Full `go build` of the frontend (toolchain 1.27): verified by the first green CI run (`go vet`, `go test -race` on the whole module, image build). See §3.8
 - [ ] cloud-provider-kind: Gateway gets an address and routes by host; whether the `exclude-from-external-load-balancers` label must be removed from the single node
-- [ ] kindnet actually enforces NetworkPolicies (default deny + `netpol-typo`)
-- [ ] Redis with `--requirepass $(REDIS_PASSWORD)` and cartservice with a `password=` connection string work
+- [x] kindnet actually enforces NetworkPolicies (default deny + `netpol-typo`): new connections from an `app=checkoutservice` pod were OPEN to shipping and BLOCKED to payment under the typo; default-deny egress blocked DNS for an unlabelled pod. Existing connections are **not** cut (§4)
+- [x] Redis with `--requirepass $(REDIS_PASSWORD)` and cartservice with a `password=` connection string work: `PING` without auth → `NOAUTH`, with the Secret → `PONG` (dev and prod); cart and checkout pass the smoke test. Trade-off: the password is visible in the Redis process command line to whoever can exec into the pod (no human persona can)
 - [x] Kyverno policies: ~~the `"*:* & !*:latest"` syntax, per-rule `failureAction`~~ Kyverno 1.20 no longer admits `ClusterPolicy`: migrated to CEL `ValidatingPolicy`; 9 dry-run admission tests as expected; PolicyReports show only the expected `loadgenerator` finding, so no false positives (§3.11)
 - [x] PSA `restricted` admits every pod (including the load generator's init container): both namespaces enforce `restricted`; dev 12/12 and prod 13/13 pods Running, load generator init container `Completed`
 - [x] kube-prometheus-stack, Kyverno and Argo CD values with the current chart versions: kube-prometheus-stack 93.3.1, kyverno 3.10.0, argo-cd 10.18.0, metrics-server 3.14.0. Three values needed runtime fixes: Grafana resources and plugins (§3.9), Kyverno reports-controller limits (§3.11)
-- [ ] Dashboard panels and alerts with real data
+- [x] Dashboard panels and alerts with real data: every panel query run against Prometheus for dev and prod returns data (the "waiting reason" query is empty while nothing waits, as expected); 8 rules loaded with correct runbook anchors; `BoutiqueCheckoutFailing` fired and resolved in the netpol-typo run. Two leftovers from disabling Alertmanager fixed (an always-firing rule, a dangling Grafana datasource)
 - [x] `helm lint`/`helm template` of the Krateo chart: verified in CI (1 chart linted, rendered Application valid under `kubeconform -strict`)
 - [ ] Krateo PoC: CDC permissions to create Applications in `argocd`
 - [ ] Real bootstrap duration and memory usage (estimate: 6–7 GB)
