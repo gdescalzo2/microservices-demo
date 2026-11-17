@@ -12,9 +12,9 @@ need curl kubectl
 ENV="${1:-dev}"; NS="$(ns_for "$ENV")"; HOST="$(host_for "$ENV")"
 IP="$(gateway_ip)"; [[ -n "$IP" ]] || die "Gateway has no address (kubectl -n gateway-infra get gateway)"
 BASE="http://${HOST}"
-JAR="$(mktemp)"; PF_PID=""
+JAR="$(mktemp)"; PF_PID=""; PF_LOG=""
 cleanup() {
-  rm -f "$JAR"
+  rm -f "$JAR" "$PF_LOG"
   if [[ -n "$PF_PID" ]]; then kill "$PF_PID" 2>/dev/null || true; fi
 }
 trap cleanup EXIT
@@ -61,18 +61,28 @@ if [[ -n "$VERSION" ]]; then ok "X-App-Version: $VERSION"; PASS=$((PASS+1)); els
 
 step "Metrics endpoint (not exposed by the Gateway)"
 check "/metrics NOT reachable through the Gateway" t_no_public_metrics
-# kubectl directly, not through the k() function: a backgrounded function runs
-# in a subshell, $! would be the subshell and cleanup would orphan kubectl.
-# An orphan keeps the port, the next run's port-forward fails silently and
-# the check reads the metrics of the *previous* environment (seen for real).
-kubectl --context "$KUBE_CONTEXT" -n "$NS" port-forward svc/frontend-metrics 19090:9090 >/dev/null 2>&1 & PF_PID=$!
-sleep 3
-t_pf_alive() { kill -0 "$PF_PID" 2>/dev/null; }
-t_metrics() { t_pf_alive && curl -s localhost:19090/metrics | grep '^boutique_frontend_http_requests_total' >/dev/null; }
-check "port-forward to $NS/frontend-metrics is running (port 19090 free)" t_pf_alive
+# Port-forward rules, each one learnt from a wrong result on the cluster:
+# - kubectl is started directly, not through k(): a backgrounded function runs
+#   in a subshell, $! is the subshell and cleanup orphans kubectl;
+# - no fixed local port: an orphan (or anything else) holding it made the
+#   check read the metrics of the *previous* environment. With ":9090" kubectl
+#   picks a free port and prints it; we read the port from its own output, so
+#   the port we query is guaranteed to be this port-forward.
+PF_LOG="$(mktemp)"; PF_PORT=""
+kubectl --context "$KUBE_CONTEXT" -n "$NS" port-forward --address 127.0.0.1 svc/frontend-metrics :9090 >"$PF_LOG" 2>&1 & PF_PID=$!
+for _ in $(seq 1 20); do   # up to 10s
+  PF_PORT="$(sed -n 's/^Forwarding from 127\.0\.0\.1:\([0-9]*\) -> 9090$/\1/p' "$PF_LOG" | head -1)"
+  [[ -n "$PF_PORT" ]] && break
+  kill -0 "$PF_PID" 2>/dev/null || break
+  sleep 0.5
+done
+t_pf_ready() { [[ -n "$PF_PORT" ]] && kill -0 "$PF_PID" 2>/dev/null; }
+metrics() { curl -s --max-time 5 "http://127.0.0.1:${PF_PORT}/metrics"; }
+t_metrics() { t_pf_ready && metrics | grep '^boutique_frontend_http_requests_total' >/dev/null; }
+check "port-forward to $NS/frontend-metrics ready (local port ${PF_PORT:-none})" t_pf_ready
 check "frontend-metrics exposes boutique_frontend_http_requests_total" t_metrics
-if t_pf_alive; then
-  curl -s localhost:19090/metrics | grep -E '^boutique_frontend_(build_info|http_requests_total\{method="POST",route="/cart/checkout")' | sed 's/^/    /' || true
+if t_pf_ready; then
+  metrics | grep -E '^boutique_frontend_(build_info|http_requests_total\{method="POST",route="/cart/checkout")' | sed 's/^/    /' || true
 fi
 
 echo
