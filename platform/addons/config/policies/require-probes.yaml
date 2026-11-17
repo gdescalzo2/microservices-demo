@@ -1,33 +1,32 @@
 # Audit only. Expected finding: upstream "loadgenerator" has no probes
 # (it is a load client, not a server): a conscious, documented exception.
-apiVersion: kyverno.io/v1
-kind: ClusterPolicy
+apiVersion: policies.kyverno.io/v1
+kind: ValidatingPolicy
 metadata:
   name: require-probes
   annotations:
     policies.kyverno.io/title: Require readiness and liveness probes
     policies.kyverno.io/category: Best Practices
 spec:
-  background: true
-  rules:
-    - name: containers-have-probes
-      match:
-        any:
-          - resources:
-              kinds: [Pod]
-              namespaceSelector:
-                matchExpressions:
-                  - key: platform.example.com/environment
-                    operator: Exists
-      validate:
-        failureAction: Audit
-        message: "Containers should define readiness and liveness probes."
-        pattern:
-          spec:
-            containers:
-              # periodSeconds is defaulted by the API server, so ">0" just
-              # means "the probe exists".
-              - readinessProbe:
-                  periodSeconds: ">0"
-                livenessProbe:
-                  periodSeconds: ">0"
+  validationActions: [Audit]
+  evaluation:
+    background:
+      enabled: true
+  autogen:
+    podControllers:
+      controllers: [deployments, statefulsets, daemonsets]
+  matchConstraints:
+    resourceRules:
+      - apiGroups: [""]
+        apiVersions: [v1]
+        operations: [CREATE, UPDATE]
+        resources: [pods]
+    namespaceSelector:
+      matchExpressions:
+        - key: platform.example.com/environment
+          operator: Exists
+  validations:
+    - expression: >-
+        object.spec.containers.all(c,
+          has(c.readinessProbe) && has(c.livenessProbe))
+      message: "Containers should define readiness and liveness probes."

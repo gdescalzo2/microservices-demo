@@ -1,30 +1,45 @@
 # Mutable tags (":latest" or no tag) make rollbacks unreliable: what you roll
 # back to may not be what was running. Enforced (blocks admission).
-apiVersion: kyverno.io/v1
-kind: ClusterPolicy
+#
+# CEL ValidatingPolicy: Kyverno 1.20 no longer admits legacy kyverno.io
+# ClusterPolicy objects. Autogen applies the same check to Deployments, so a
+# bad manifest is rejected at "kubectl apply"/Argo CD sync, not later when the
+# ReplicaSet tries to create pods.
+apiVersion: policies.kyverno.io/v1
+kind: ValidatingPolicy
 metadata:
   name: disallow-latest-tag
   annotations:
     policies.kyverno.io/title: Disallow latest tag
     policies.kyverno.io/category: Best Practices
 spec:
-  background: true
-  rules:
-    - name: require-explicit-tag
-      match:
-        any:
-          - resources:
-              kinds: [Pod]
-              namespaceSelector:
-                matchExpressions:
-                  - key: platform.example.com/environment
-                    operator: Exists
-      validate:
-        failureAction: Enforce
-        message: "Images must use an explicit, immutable tag or digest (not ':latest')."
-        pattern:
-          spec:
-            =(initContainers):
-              - image: "*:* & !*:latest"
-            containers:
-              - image: "*:* & !*:latest"
+  validationActions: [Deny]
+  evaluation:
+    background:
+      enabled: true
+  autogen:
+    podControllers:
+      controllers: [deployments, statefulsets, daemonsets, jobs, cronjobs]
+  matchConstraints:
+    resourceRules:
+      - apiGroups: [""]
+        apiVersions: [v1]
+        operations: [CREATE, UPDATE]
+        resources: [pods]
+    namespaceSelector:
+      matchExpressions:
+        - key: platform.example.com/environment
+          operator: Exists
+  variables:
+    - name: allContainers
+      expression: >-
+        object.spec.containers +
+        (has(object.spec.initContainers) ? object.spec.initContainers : [])
+  validations:
+    # A digest (@sha256:...) is immutable. Otherwise the last path segment must
+    # carry a tag (so "registry:5000/app" without a tag fails) other than latest.
+    - expression: >-
+        variables.allContainers.all(c,
+          c.image.contains('@') ||
+          (c.image.matches(':[^/]+$') && !c.image.endsWith(':latest')))
+      message: "Images must use an explicit, immutable tag or digest (not ':latest')."

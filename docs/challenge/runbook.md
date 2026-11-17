@@ -234,7 +234,7 @@ argocd app diff $APP          # with the CLI (after argocd login)
 
 | Message | Cause |
 |---|---|
-| `admission webhook "validate.kyverno.svc-fail" denied the request` | The change violates an Enforce policy (`:latest` tag, missing owner label). Fix the manifest in Git |
+| `admission webhook "vpol.validate.kyverno.svc-fail" denied the request: Policy <name> failed` | The change violates a `Deny` ValidatingPolicy (`:latest` tag, missing owner label). Fix the manifest in Git |
 | `pods ... is forbidden: violates PodSecurity "restricted"` | The container does not meet PSA restricted (root, capabilities, seccomp) |
 | `resource ... is not permitted in project` | The AppProject does not allow that resource or namespace (guardrail working as intended) |
 | `OutOfSync` with no errors | Manual drift (dev), or a new commit not synced yet: run `argocd_sync` or wait for polling (60 s) |

@@ -47,7 +47,7 @@ In prod the on-call group can act during an incident, but Argo CD self-heal reve
 ### GitOps guardrails (AppProjects)
 
 - `boutique`: may deploy only to `boutique-dev` and `boutique-prod`. At cluster level it may create only the `Namespace` object: no ClusterRoles, CRDs or webhooks. It cannot manage `ResourceQuota` or `LimitRange`, which belong to the platform team.
-- `platform`: only `gateway-infra`, `monitoring` and Kyverno `ClusterPolicy`.
+- `platform`: only `gateway-infra`, `monitoring` and Kyverno `ValidatingPolicy`.
 - `boutique-selfservice` (Krateo): only `boutique-*` namespaces.
 
 ## 3. Pod security
@@ -57,9 +57,11 @@ In prod the on-call group can act during an incident, but Argo CD self-heal reve
 | Non-root (UID 1000), `allowPrivilegeEscalation: false`, `capabilities.drop: [ALL]`, `readOnlyRootFilesystem: true` | upstream (checked on every container, init container included) |
 | `seccompProfile: RuntimeDefault` | platform patch `pod-hardening.yaml` (missing upstream) |
 | **Pod Security Admission `restricted` in enforce** on both namespaces | `overlays/*/namespace.yaml` |
-| Explicit image tags (no `:latest`): Kyverno **Enforce** | `disallow-latest-tag`; also `redis:alpine` (mutable tag) → `redis:8-alpine` |
-| Mandatory owner label: Kyverno **Enforce** | `require-owner-label` |
+| Explicit image tags (no `:latest`): Kyverno **Deny** | `disallow-latest-tag`; also `redis:alpine` (mutable tag) → `redis:8-alpine` |
+| Mandatory owner label: Kyverno **Deny** | `require-owner-label` |
 | Requests/limits and probes: Kyverno **Audit** | `kubectl get policyreport -A` (expected finding: `loadgenerator` without probes) |
+
+The policies are Kyverno **`ValidatingPolicy`** objects (`policies.kyverno.io/v1`, CEL expressions). Kyverno 1.20 stopped admitting the legacy `kyverno.io` `ClusterPolicy` type, so the first real bootstrap could not create them. The pod-level policies use `autogen` for Deployments and the other controllers: a bad manifest is rejected when it is applied or synced, not later when the ReplicaSet creates pods. Verified on the cluster with server-side dry runs (`:latest`, no tag, registry port without a tag, `:latest` init container, missing owner → denied; explicit tag, digest, namespaces without the environment label → allowed) and with PolicyReports: the only failure is the expected `loadgenerator` finding.
 
 Proof that PSA works:
 
