@@ -13,6 +13,11 @@ spec:
     path: platform/addons/config
   destination:
     server: https://kubernetes.default.svc
+    # Required: Argo CD checks it against the AppProject destinations, and an
+    # empty namespace matches none of them (InvalidSpecError). It is only the
+    # default for namespaced resources without one: every namespaced resource
+    # in platform/addons/config sets its namespace explicitly.
+    namespace: monitoring
   syncPolicy:
     automated:
       prune: true
