@@ -9,7 +9,7 @@ read -r -p "Delete kind cluster '$CLUSTER_NAME' and the cloud-provider-kind cont
 [[ "$ans" =~ ^[Yy]$ ]] || exit 0
 
 kind delete cluster --name "$CLUSTER_NAME" && ok "cluster deleted"
-docker rm -f cloud-provider-kind >/dev/null 2>&1 && ok "cloud-provider-kind removed" || true
+if docker rm -f cloud-provider-kind >/dev/null 2>&1; then ok "cloud-provider-kind removed"; fi
 # Proxies started by cloud-provider-kind for LoadBalancers/Gateways live on the
 # "kind" docker network: list leftovers instead of guessing their names.
 left="$(docker ps -a --filter network=kind --format '{{.Names}}' || true)"

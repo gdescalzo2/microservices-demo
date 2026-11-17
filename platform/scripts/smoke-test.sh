@@ -13,7 +13,10 @@ ENV="${1:-dev}"; NS="$(ns_for "$ENV")"; HOST="$(host_for "$ENV")"
 IP="$(gateway_ip)"; [[ -n "$IP" ]] || die "Gateway has no address (kubectl -n gateway-infra get gateway)"
 BASE="http://${HOST}"
 JAR="$(mktemp)"; PF_PID=""
-cleanup() { rm -f "$JAR"; [[ -n "$PF_PID" ]] && kill "$PF_PID" 2>/dev/null || true; }
+cleanup() {
+  rm -f "$JAR"
+  if [[ -n "$PF_PID" ]]; then kill "$PF_PID" 2>/dev/null || true; fi
+}
 trap cleanup EXIT
 
 PASS=0; FAIL=0
