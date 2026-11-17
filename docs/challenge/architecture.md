@@ -197,7 +197,7 @@ The differences live only in `overlays/<env>/kustomization.yaml` and the few fil
 Upstream CPU requests add up to about 1.6 CPU per environment: loadgenerator 300m, ad and cart 200m, the others 100m, redis 70m. A 4 vCPU node also runs two environments, monitoring, Argo CD and Kyverno, so the scheduler would leave pods `Pending`. The `kind-sizing` component sets every CPU request to **20m**. Limits and memory are unchanged, so pods can still use free CPU up to their limit.
 
 Two safeguards keep this density workable, both added after the first real bootstrap froze the VM:
-- the kind node container is **capped at vCPUs − 1** (`bootstrap.sh`, `KIND_NODE_CPUS` to override), so the host desktop and Docker always keep one CPU;
+- the kind node container is **capped at vCPUs − 1** (`bootstrap.sh`; no cap with 2 vCPUs or fewer; `KIND_NODE_CPUS` to override), so the host desktop and Docker keep one CPU;
 - every probed service has a **startup probe** (`kind-sizing`): with 20m requests, cold starts under contention exceed the upstream liveness windows, and the resulting restart loops kept the node CPU-bound.
 
 This is a laptop compromise. In production, requests must be measured: the p95 of real usage from Prometheus, or VPA in *recommendation* mode. Scheduling, QoS and the HPA all depend on them. In prod the frontend request is set back to 100m precisely because the HPA computes utilization **relative to the request**: with 20m it would always scale to the maximum.
