@@ -9,7 +9,7 @@ metadata:
 spec:
   description: Self-service Online Boutique instances created through Krateo
   sourceRepos:
-    - https://github.com/YOUR_GITHUB_USER/microservices-demo.git
+    - https://github.com/gdescalzo2/microservices-demo.git
   destinations:
     - server: https://kubernetes.default.svc
       namespace: "boutique-*"

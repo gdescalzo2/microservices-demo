@@ -8,7 +8,7 @@ metadata:
 spec:
   project: platform
   source:
-    repoURL: https://github.com/YOUR_GITHUB_USER/microservices-demo.git
+    repoURL: https://github.com/gdescalzo2/microservices-demo.git
     targetRevision: main
     path: platform/addons/config
   destination:
@@ -28,7 +28,7 @@ metadata:
 spec:
   project: boutique
   source:
-    repoURL: https://github.com/YOUR_GITHUB_USER/microservices-demo.git
+    repoURL: https://github.com/gdescalzo2/microservices-demo.git
     targetRevision: main
     path: platform/deploy/overlays/dev
   destination:
@@ -54,7 +54,7 @@ metadata:
 spec:
   project: boutique
   source:
-    repoURL: https://github.com/YOUR_GITHUB_USER/microservices-demo.git
+    repoURL: https://github.com/gdescalzo2/microservices-demo.git
     targetRevision: main
     path: platform/deploy/overlays/prod
   destination:

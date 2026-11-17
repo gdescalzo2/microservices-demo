@@ -3,7 +3,7 @@
 # Composition Dynamic Controller (CDC) that reconciles instances of it.
 # Publish the chart first (see docs/challenge/krateo.md, "PoC"):
 #   helm package platform/krateo/boutique-service
-#   helm push boutique-service-0.1.0.tgz oci://ghcr.io/YOUR_GITHUB_USER/charts
+#   helm push boutique-service-0.1.0.tgz oci://ghcr.io/gdescalzo2/charts
 apiVersion: core.krateo.io/v1alpha1
 kind: CompositionDefinition
 metadata:
@@ -11,5 +11,5 @@ metadata:
   namespace: krateo-system
 spec:
   chart:
-    url: oci://ghcr.io/YOUR_GITHUB_USER/charts/boutique-service
+    url: oci://ghcr.io/gdescalzo2/charts/boutique-service
     version: 0.1.0

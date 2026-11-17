@@ -7,7 +7,7 @@ metadata:
 spec:
   description: Platform-team owned configuration (gateway, alerts, dashboards, policies)
   sourceRepos:
-    - https://github.com/YOUR_GITHUB_USER/microservices-demo.git
+    - https://github.com/gdescalzo2/microservices-demo.git
   destinations:
     - server: https://kubernetes.default.svc
       namespace: gateway-infra
@@ -27,7 +27,7 @@ metadata:
 spec:
   description: Online Boutique application team - may only deploy into boutique-* namespaces
   sourceRepos:
-    - https://github.com/YOUR_GITHUB_USER/microservices-demo.git
+    - https://github.com/gdescalzo2/microservices-demo.git
   destinations:
     - server: https://kubernetes.default.svc
       namespace: boutique-dev

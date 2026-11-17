@@ -10,7 +10,7 @@ frontend:
 ingress:
   host: ""                # default: <name>.<environment>.boutique.local
 git:
-  repoURL: https://github.com/YOUR_GITHUB_USER/microservices-demo.git
+  repoURL: https://github.com/gdescalzo2/microservices-demo.git
   targetRevision: main
 # Platform-owned settings (not meant to be exposed in the consumer form)
 argocd:

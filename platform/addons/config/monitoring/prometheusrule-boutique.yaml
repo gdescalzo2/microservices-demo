@@ -21,7 +21,7 @@ spec:
           annotations:
             summary: "Frontend 5xx ratio above 5% in {{ $labels.namespace }}"
             description: "{{ $value | humanizePercentage }} of requests fail. Check which route fails, then the backend it calls."
-            runbook_url: https://github.com/YOUR_GITHUB_USER/microservices-demo/blob/main/docs/challenge/runbook.md#rb-frontend-errors
+            runbook_url: https://github.com/gdescalzo2/microservices-demo/blob/main/docs/challenge/runbook.md#rb-frontend-errors
         - alert: BoutiqueCheckoutFailing
           expr: |
             sum by (namespace) (rate(boutique_frontend_http_requests_total{route="/cart/checkout",code=~"5.."}[5m])) > 0
@@ -31,7 +31,7 @@ spec:
           annotations:
             summary: "Orders are failing in {{ $labels.namespace }}"
             description: "POST /cart/checkout returns 5xx: customers cannot buy. Checkout calls cart, catalog, currency, shipping, payment, email."
-            runbook_url: https://github.com/YOUR_GITHUB_USER/microservices-demo/blob/main/docs/challenge/runbook.md#rb-checkout
+            runbook_url: https://github.com/gdescalzo2/microservices-demo/blob/main/docs/challenge/runbook.md#rb-checkout
         - alert: BoutiqueFrontendLatencyHigh
           expr: |
             histogram_quantile(0.95,
@@ -42,7 +42,7 @@ spec:
             severity: warning
           annotations:
             summary: "Frontend p95 latency above 1s in {{ $labels.namespace }}"
-            runbook_url: https://github.com/YOUR_GITHUB_USER/microservices-demo/blob/main/docs/challenge/runbook.md#rb-latency
+            runbook_url: https://github.com/gdescalzo2/microservices-demo/blob/main/docs/challenge/runbook.md#rb-latency
         - alert: BoutiqueFrontendMetricsDown
           expr: up{job="frontend-metrics", namespace=~"boutique-.*"} == 0
           for: 2m
@@ -50,7 +50,7 @@ spec:
             severity: warning
           annotations:
             summary: "Prometheus cannot scrape frontend {{ $labels.pod }} in {{ $labels.namespace }}"
-            runbook_url: https://github.com/YOUR_GITHUB_USER/microservices-demo/blob/main/docs/challenge/runbook.md#rb-metrics-down
+            runbook_url: https://github.com/gdescalzo2/microservices-demo/blob/main/docs/challenge/runbook.md#rb-metrics-down
     - name: boutique.workloads
       rules:
         - alert: BoutiqueContainerWaiting
@@ -64,7 +64,7 @@ spec:
             severity: warning
           annotations:
             summary: "{{ $labels.namespace }}/{{ $labels.pod }} ({{ $labels.container }}) stuck in {{ $labels.reason }}"
-            runbook_url: https://github.com/YOUR_GITHUB_USER/microservices-demo/blob/main/docs/challenge/runbook.md#rb-pod-waiting
+            runbook_url: https://github.com/gdescalzo2/microservices-demo/blob/main/docs/challenge/runbook.md#rb-pod-waiting
         - alert: BoutiqueContainerOOMKilled
           expr: |
             max by (namespace, pod, container) (
@@ -74,7 +74,7 @@ spec:
             severity: warning
           annotations:
             summary: "{{ $labels.namespace }}/{{ $labels.pod }} ({{ $labels.container }}) was OOMKilled"
-            runbook_url: https://github.com/YOUR_GITHUB_USER/microservices-demo/blob/main/docs/challenge/runbook.md#rb-oom
+            runbook_url: https://github.com/gdescalzo2/microservices-demo/blob/main/docs/challenge/runbook.md#rb-oom
         - alert: BoutiquePodRestarting
           expr: |
             increase(kube_pod_container_status_restarts_total{namespace=~"boutique-.*"}[10m]) > 2
@@ -82,7 +82,7 @@ spec:
             severity: warning
           annotations:
             summary: "{{ $labels.namespace }}/{{ $labels.pod }} restarted {{ $value | humanize }} times in 10m"
-            runbook_url: https://github.com/YOUR_GITHUB_USER/microservices-demo/blob/main/docs/challenge/runbook.md#rb-pod-waiting
+            runbook_url: https://github.com/gdescalzo2/microservices-demo/blob/main/docs/challenge/runbook.md#rb-pod-waiting
         - alert: BoutiqueDeploymentReplicasMismatch
           expr: |
             kube_deployment_spec_replicas{namespace=~"boutique-.*"}
@@ -92,4 +92,4 @@ spec:
             severity: warning
           annotations:
             summary: "{{ $labels.namespace }}/{{ $labels.deployment }} has fewer available replicas than desired"
-            runbook_url: https://github.com/YOUR_GITHUB_USER/microservices-demo/blob/main/docs/challenge/runbook.md#rb-rollout-stuck
+            runbook_url: https://github.com/gdescalzo2/microservices-demo/blob/main/docs/challenge/runbook.md#rb-rollout-stuck
