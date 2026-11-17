@@ -13,7 +13,7 @@ spec:
       enabled: true
   autogen:
     podControllers:
-      controllers: [deployments, statefulsets, daemonsets, jobs, cronjobs]
+      controllers: [deployments, statefulsets, daemonsets]
   matchConstraints:
     resourceRules:
       - apiGroups: [""]
