@@ -42,7 +42,7 @@ The mistakes are the most useful part. They show why every output went through a
 | Frontend metrics (Go) | Middleware + Prometheus exposition + tests | A deliberate choice of the stdlib over `client_golang`. `go.sum` could not be updated in the workspace (Go proxy blocked), and an unverifiable `go.sum` does not go into the repo. Trade-off documented |
 | Operational scripts | Idempotent bootstrap, smoke test, release/rollback, chaos | `grep -q` + `pipefail` bug (§3.6); shellcheck reported 3 warnings, fixed |
 | CI pipeline | Job structure | SHA pinning resolved with `git ls-remote`; one SHA written from memory was wrong (§3.2) |
-| Kyverno policies | The 4 policies | The first version of `disallow-latest-tag` used `foreach/deny` with a wildcard in an `Equals` operator (semantics not guaranteed). Rewritten with the documented pattern `"*:* & !*:latest"` |
+| Kyverno policies | The 4 policies | The first version of `disallow-latest-tag` used `foreach/deny` with a wildcard in an `Equals` operator (semantics not guaranteed). Rewritten with the documented pattern `"*:* & !*:latest"`. On the first real cluster, Kyverno 1.20 refused every legacy `ClusterPolicy`: all 4 policies migrated to CEL `ValidatingPolicy` (§3.11) |
 | Krateo | Chart + schema + PoC script | The naming rule of the generated CRD was verified **in the core-provider source** instead of inferred |
 
 ### 2.3 Operations and troubleshooting
@@ -98,6 +98,32 @@ Concrete examples, each with *how* it surfaced.
 - *Fix*: the two shell lines rewritten as explicit `if` statements; `go vet -copylocks=false` with a comment explaining why (the upstream code is left untouched); yamllint and shellcheck pinned in CI to the versions used for local validation. Second run: all three jobs green; image pushed to GHCR; Trivy found no fixable CRITICAL CVEs and 6 HIGH ones (reported, not blocking by design).
 - *Lesson*: "passes locally" is only as good as the parity between local and CI tooling. Pin linter versions.
 
+The next entries come from the **first real bootstrap** in the VM (Ubuntu 26.04, 4 vCPU, 9.2 GiB, kind v0.33 / Kubernetes v1.37, Helm v4.3). Each one passed every static check.
+
+**3.9 Grafana stuck in a liveness loop: a memory limit estimated without data.**
+- *What happened*: `helm --wait` failed on kube-prometheus-stack with `Progress deadline exceeded`. Grafana (chart 93.3.1, Grafana 13) was killed by its liveness probe every ~3 minutes (exit 137, `Reason: Error`, not `OOMKilled`).
+- *Diagnosis*: hypotheses ordered (slow image pull → crash from values → volume), read-only checks only. The image had pulled fine; logs showed Grafana still initialising when killed; `kubectl top --containers` showed **250Mi against a 256Mi limit and 2.2 CPU**: a Go process pinned to its memory limit, GC thrashing. Grafana 13 also registers ~20 bundled plugins (~45 s) and runs most datasources as separate backend processes.
+- *Fix*: memory 256Mi/640Mi and the unused bundled plugins disabled (`grafana.ini` `disable_plugins`, `preinstall_disabled`). Verified: 2 plugins instead of 21, Ready in under 40 s with 0 restarts, 344Mi and 135m CPU.
+- *Side note on the agent itself*: the bootstrap was launched as `bootstrap.sh > log; ...; tail log`, so the background-task notification reported **exit code 0** for a failed run. The real exit code was in the log (`EXIT=1`). Read the evidence, not the summary.
+- *Lesson*: resource limits written before the software has ever run are guesses; measure them on first start (`kubectl top --containers`) and write the measured value in the comment.
+
+**3.10 The VM froze: restart loops plus an uncapped kind node.**
+- *What happened*: during the second bootstrap the desktop stopped responding for minutes and the VM had to be rebooted. In the cluster, emailservice and recommendationservice were in CrashLoopBackOff in both namespaces (23–25 restarts, exit 137 from liveness kills), so `boutique-prod` stayed `Progressing` for 20 minutes.
+- *Diagnosis*: the obvious hypothesis (memory, no swap) was **wrong**: a 30 s sampler showed RAM flat at ~5.8 of 9.2 GB and the journal of the previous boot had no host OOM. The evidence pointed to CPU: a 2.5-minute gap in the sampler, a kernel warning about the NIC driver starved of CPU, load average ~14 on 4 vCPU, and CPU pressure still at 43% after the reboot. The Python services, with 20m requests (`kind-sizing`) and 200m limits, took longer to start than the upstream liveness window (3 × 5 s, no initial delay), and every restart burnt more CPU. The kind node container had no CPU cap, so the cluster could take every CPU from the desktop.
+- *Fix*: (1) startup probes on every probed service in `kind-sizing` (same check as liveness, up to 150 s); (2) `bootstrap.sh` caps the node container at vCPUs − 1 (`KIND_NODE_CPUS`). Testing the cap found a second bug before the commit: `docker update --cpus 0` leaves an existing cap **unchanged**, so "0 = no cap" sets the cap to all CPUs instead. Third bootstrap: no restart loops, peak CPU pressure 81% but no freeze (no gaps in the sampler), peak RAM 6.7 GB.
+- *Lesson*: lowering requests to fit a small node shifts the cost to start-up time; liveness windows designed for a production-sized cluster must be relaxed with startup probes, not by weakening liveness.
+
+**3.11 Kyverno 1.20 refused the legacy policies, then its reports controller looped.**
+- *What happened*: `platform-config` stayed OutOfSync: `Kyverno v1.20 removed execution of legacy kyverno.io policy types and no longer accepts create or update requests for them`. The 4 policies (written as `kyverno.io/v1` `ClusterPolicy`, validated by kubeconform against their CRD schema) **had never been active**. Same class of error as §3.1: the model's knowledge of the "current" API was out of date, and schema validation cannot detect a type the controller no longer serves.
+- *Fix*: migration to `policies.kyverno.io/v1` `ValidatingPolicy` with CEL. The schema was taken from the installed CRDs (`kubectl explain`), not from memory. Explicit `autogen.podControllers` was added, then checked in the policy status: Kyverno rewrote `object.spec.containers` into `object.spec.template.spec.containers` (Deployments) and `jobTemplate...` (CronJobs). Verified with 9 server-side dry runs (5 must be denied, 4 allowed, all as expected) and with PolicyReports: the only failure is the expected `loadgenerator` without probes, so no false positives.
+- *Follow-up issue*: once the policies existed, the Kyverno reports controller restarted 5 times in 10 minutes (exit 0). Its logs showed `Failed to renew lease ... context deadline exceeded`, then `leadership lost` and shutdown. Measurements: the controller alone used 1.8 CPU, the node 2.92 of its 3-CPU cap (throttled in 30% of periods), I/O negligible. Every restart reloaded caches for every API type and restarted the scan, which starved the API server and caused the next lost lease. Fix: CPU limit 500m (memory 256Mi) on the reports controller. After it: 0 restarts, scan completed in about 40 s, node down to 1.4 CPU.
+- *Lesson*: "kubeconform -strict passes" proves the YAML matches a schema, not that the controller still accepts the type. For third-party controllers, the release notes of the version actually installed are part of validation; unpinned charts (README §5) made this surface on the first install.
+
+**3.12 Argo CD rejected an Application with no destination namespace.**
+- *What happened*: `platform-config` was `Unknown/Unknown` with `InvalidSpecError: ... namespace '' do not match any of the allowed destinations in project 'platform'`.
+- *Fix*: `destination.namespace: monitoring`, used only as the default for namespaced resources without one (they all set it explicitly).
+- *Lesson*: another rule that exists only at runtime (Argo CD admission), invisible to schema validation.
+
 ## 4. Troubleshooting case with AI
 
 > To be filled in during the run in the VM with Claude Code. Recommended scenario: `chaos.sh netpol-typo dev`. It is the most instructive one, because every pod stays `Ready` and only checkout fails.
@@ -144,9 +170,9 @@ An honest list of what static validation cannot guarantee. Tick them during the 
 - [ ] cloud-provider-kind: Gateway gets an address and routes by host; whether the `exclude-from-external-load-balancers` label must be removed from the single node
 - [ ] kindnet actually enforces NetworkPolicies (default deny + `netpol-typo`)
 - [ ] Redis with `--requirepass $(REDIS_PASSWORD)` and cartservice with a `password=` connection string work
-- [ ] Kyverno policies: the `"*:* & !*:latest"` syntax, per-rule `failureAction`, no false positives on the workloads
-- [ ] PSA `restricted` admits every pod (including the load generator's init container)
-- [ ] kube-prometheus-stack, Kyverno and Argo CD values with the current chart versions
+- [x] Kyverno policies: ~~the `"*:* & !*:latest"` syntax, per-rule `failureAction`~~ Kyverno 1.20 no longer admits `ClusterPolicy`: migrated to CEL `ValidatingPolicy`; 9 dry-run admission tests as expected; PolicyReports show only the expected `loadgenerator` finding, so no false positives (§3.11)
+- [x] PSA `restricted` admits every pod (including the load generator's init container): both namespaces enforce `restricted`; dev 12/12 and prod 13/13 pods Running, load generator init container `Completed`
+- [x] kube-prometheus-stack, Kyverno and Argo CD values with the current chart versions: kube-prometheus-stack 93.3.1, kyverno 3.10.0, argo-cd 10.18.0, metrics-server 3.14.0. Three values needed runtime fixes: Grafana resources and plugins (§3.9), Kyverno reports-controller limits (§3.11)
 - [ ] Dashboard panels and alerts with real data
 - [x] `helm lint`/`helm template` of the Krateo chart: verified in CI (1 chart linted, rendered Application valid under `kubeconform -strict`)
 - [ ] Krateo PoC: CDC permissions to create Applications in `argocd`
