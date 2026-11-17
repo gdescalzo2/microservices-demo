@@ -5,5 +5,12 @@ backgroundController:
   replicas: 1
 reportsController:
   replicas: 1
+  # On start the reports controller lists every API resource type and rescans
+  # the cluster: ~1.8 CPU on the kind node. That starved the API server, the
+  # controller missed its leader-lease renewal, exited and restarted: a loop.
+  # The CPU limit protects the node; memory measured at ~90Mi vs the 128Mi default.
+  resources:
+    requests: {cpu: 100m, memory: 64Mi}
+    limits: {cpu: 500m, memory: 256Mi}
 cleanupController:
   enabled: false
