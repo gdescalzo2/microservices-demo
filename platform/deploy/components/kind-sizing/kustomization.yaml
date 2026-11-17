@@ -16,3 +16,5 @@ patches:
       - op: replace
         path: /spec/template/spec/containers/0/resources/requests/cpu
         value: 20m
+  # Cold starts under CPU contention exceed the upstream liveness windows.
+  - path: startup-probes.yaml
