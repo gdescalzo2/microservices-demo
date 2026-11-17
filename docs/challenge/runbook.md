@@ -180,6 +180,8 @@ k -n $NS describe pod <pod> | sed -n '/State:/,/Ready:/p;/Events:/,$p'
 | `CreateContainerConfigError` | referenced Secret or ConfigMap missing | `describe` → "secret \"redis-auth\" not found" → [§2.8](#rb-secret) |
 | `RunContainerError` / `CreateContainerError` | security or runtime constraints | `describe`; e.g. `readOnlyRootFilesystem` with an app that writes to disk |
 
+Exit code 137 with `Reason: Error` (not `OOMKilled`) and a `Killing ... failed liveness probe` event means the kubelet killed a container that was **too slow to start**, usually because of CPU contention. Each restart burns more CPU, so the loop feeds itself. Check the node load ([§2.11](#rb-host-cpu)) and that the Deployment has a `startupProbe` (the `kind-sizing` component adds one to every probed service).
+
 <a id="rb-oom"></a>
 ### 2.6 OOMKilled (`BoutiqueContainerOOMKilled`)
 
@@ -249,6 +251,27 @@ k -n $NS get httproute frontend -o jsonpath='{.status}' | jq   # Accepted / Reso
 ```
 
 A `404` from the Gateway (not from the frontend) means no HTTPRoute matches the host. Typical causes: wrong hostname, or a namespace without the `platform.example.com/gateway-access=true` label.
+
+<a id="rb-host-cpu"></a>
+### 2.11 The VM freezes or is very slow (host CPU saturated)
+
+Symptoms: the desktop stops responding during the bootstrap or a rollout; many pods restart at once with exit code 137 and liveness failures.
+
+```bash
+uptime                                      # load average well above the vCPU count
+cat /proc/pressure/cpu                      # "some avg60" > 30: tasks often wait for CPU
+docker inspect boutique-control-plane --format '{{.HostConfig.NanoCpus}}'   # 0 = no CPU cap on the node
+journalctl -b -1 -p warning | grep -iE 'oom|hung|lockup'   # after a forced reboot: was it memory or CPU?
+k top pod -A --sort-by=cpu | head
+```
+
+The kind node is a Docker container; without a cap, pods can take every vCPU and starve the desktop. `bootstrap.sh` caps it at *vCPUs − 1* (`KIND_NODE_CPUS` overrides, `0` disables). To apply or change it on a running cluster, without restarting anything:
+
+```bash
+docker update --cpus 3 boutique-control-plane
+```
+
+If the load comes from a restart loop, fix that first (§2.5): a container killed by its liveness probe during a slow start burns CPU on every attempt.
 
 ## 3. Rollback
 

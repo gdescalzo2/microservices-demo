@@ -8,6 +8,7 @@
 # Usage:   platform/scripts/bootstrap.sh
 # Env:     GIT_REPO_URL  repo Argo CD will track (default: git remote "origin")
 #          SKIP_BUILD=1  do not build the frontend image
+#          KIND_NODE_CPUS  CPU cap for the kind node container (default: vCPUs - 1, 0 = no cap)
 # Re-running is safe: every step checks what already exists.
 # shellcheck source=lib.sh
 source "$(dirname "$0")/lib.sh"
@@ -39,6 +40,20 @@ fi
 # kind labels the control-plane node as excluded from load balancers; on a
 # single-node cluster that would leave the Gateway without backends.
 k label node "${CLUSTER_NAME}-control-plane" node.kubernetes.io/exclude-from-external-load-balancers- >/dev/null 2>&1 || true
+
+# Cap the node container at (vCPUs - 1): without it, pods can take every CPU
+# and freeze the host (seen on the first real bootstrap: desktop unresponsive
+# for minutes). Applied on every run, so it also fixes existing clusters.
+host_cpus="$(nproc)"
+node_cpus="${KIND_NODE_CPUS:-$(( host_cpus > 2 ? host_cpus - 1 : host_cpus ))}"
+if [[ "$node_cpus" == "0" ]]; then
+  # "docker update --cpus 0" leaves an existing cap unchanged: set it to all CPUs.
+  docker update --cpus "$host_cpus" "${CLUSTER_NAME}-control-plane" >/dev/null
+  warn "KIND_NODE_CPUS=0: node container may use all ${host_cpus} CPUs"
+else
+  docker update --cpus "$node_cpus" "${CLUSTER_NAME}-control-plane" >/dev/null
+  ok "node container capped at ${node_cpus} of ${host_cpus} CPUs (override: KIND_NODE_CPUS, 0 = no cap)"
+fi
 
 step "cloud-provider-kind (LoadBalancer IPs + Gateway API controller)"
 if docker ps --format '{{.Names}}' | grep -qx cloud-provider-kind; then
