@@ -92,6 +92,12 @@ Concrete examples, each with *how* it surfaced.
 - *What happened*: the `kind-sizing` component sets CPU requests to 20m. For the prod frontend HPA, utilization would always look very high, so it would always scale to the maximum.
 - *Fix*: the frontend request in prod is set back to 100m.
 
+**3.8 First CI run: two failures that static validation could not catch.**
+- *What happened*: the first push to the fork ran the pipeline, and two jobs failed. (1) The runner's shellcheck flagged SC2015 (`A && B || C` is not if-then-else) in two scripts; the local shellcheck 0.11 had not. (2) `go vet` failed with `copylocks` findings: all of them in **upstream** code (`handlers.go`, `money/`), where protobuf `Money` values are passed by value.
+- *Diagnosis*: read `gh run view --log-failed` before changing anything; checked that none of the vet findings pointed to files changed by the challenge. The fact that vet reached the analysis stage also proved that the modified frontend compiles with Go 1.27.
+- *Fix*: the two shell lines rewritten as explicit `if` statements; `go vet -copylocks=false` with a comment explaining why (the upstream code is left untouched); yamllint and shellcheck pinned in CI to the versions used for local validation. Second run: all three jobs green; image pushed to GHCR; Trivy found no fixable CRITICAL CVEs and 6 HIGH ones (reported, not blocking by design).
+- *Lesson*: "passes locally" is only as good as the parity between local and CI tooling. Pin linter versions.
+
 ## 4. Troubleshooting case with AI
 
 > To be filled in during the run in the VM with Claude Code. Recommended scenario: `chaos.sh netpol-typo dev`. It is the most instructive one, because every pod stays `Ready` and only checkout fails.
@@ -134,7 +140,7 @@ Argo CD with self-heal disabled in dev. Symptom: <...>. Attached output of: <com
 
 An honest list of what static validation cannot guarantee. Tick them during the first bootstrap in the VM:
 
-- [ ] Full `go build` of the frontend (toolchain 1.27, not available in the agent's workspace); the new code is tested in isolation
+- [x] Full `go build` of the frontend (toolchain 1.27): verified by the first green CI run (`go vet`, `go test -race` on the whole module, image build). See §3.8
 - [ ] cloud-provider-kind: Gateway gets an address and routes by host; whether the `exclude-from-external-load-balancers` label must be removed from the single node
 - [ ] kindnet actually enforces NetworkPolicies (default deny + `netpol-typo`)
 - [ ] Redis with `--requirepass $(REDIS_PASSWORD)` and cartservice with a `password=` connection string work
@@ -142,7 +148,8 @@ An honest list of what static validation cannot guarantee. Tick them during the 
 - [ ] PSA `restricted` admits every pod (including the load generator's init container)
 - [ ] kube-prometheus-stack, Kyverno and Argo CD values with the current chart versions
 - [ ] Dashboard panels and alerts with real data
-- [ ] `helm lint`/`helm template` of the Krateo chart; PoC: CDC permissions to create Applications in `argocd`
+- [x] `helm lint`/`helm template` of the Krateo chart: verified in CI (1 chart linted, rendered Application valid under `kubeconform -strict`)
+- [ ] Krateo PoC: CDC permissions to create Applications in `argocd`
 - [ ] Real bootstrap duration and memory usage (estimate: 6–7 GB)
 
 ## 7. Value delivered and limits
