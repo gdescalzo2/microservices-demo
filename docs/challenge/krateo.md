@@ -1,142 +1,149 @@
-# Krateo: valutazione, blueprint e PoC
+# Krateo: evaluation, blueprint and PoC
 
-> Sintesi: Krateo è adatto a rendere Online Boutique **un servizio self-service con un'API Kubernetes vera** (il "golden path"). La PoC mostra il meccanismo centrale con il solo core-provider. **Raccomandazione:** fare un pilota con 1–2 team, non adottarlo subito come portale aziendale. I motivi sono in §6.
+> **Summary**
+> - Krateo is a good fit to turn Online Boutique into **a self-service offering with a real Kubernetes API** (the "golden path").
+> - The PoC demonstrates the core mechanism using core-provider alone.
+> - **Recommendation:** run a pilot with 1–2 teams; do not adopt it right away as a company-wide portal. Reasons in §6.
 
-## 1. Cosa è Krateo (per quanto serve qui)
+## 1. What Krateo is (as far as it matters here)
 
-Krateo PlatformOps è una piattaforma open source (Krateo S.r.l., Verona) per costruire una Internal Developer Platform *Kubernetes-native*. Le parti rilevanti:
+Krateo PlatformOps is an open-source platform (Krateo S.r.l., Verona, Italy) for building a *Kubernetes-native* Internal Developer Platform. The relevant parts:
 
-| Componente | Ruolo |
+| Component | Role |
 |---|---|
-| **core-provider** (Krateo Composable Operations) | Prende un **Helm chart con `values.schema.json`** referenziato da una `CompositionDefinition` e genera una **CRD versionata** (gruppo `composition.krateo.io`). Per ogni definizione avvia un controller dedicato |
-| **composition-dynamic-controller (CDC)** | Riconcilia le istanze della CRD generata: renderizza il chart con lo `spec` dell'istanza come values e lo applica come release Helm, tenendola allineata |
-| **chart-inspector** | Fa un dry-run del chart e dice al CDC quali risorse tocca, così da generare **RBAC minima** per ogni composition |
-| **Composable Portal** | Frontend configurabile via CRD: form generati dallo schema, catalogo, viste |
-| Altri moduli | FinOps (costi), eventi e audit, autenticazione; `krateoctl` per installazione e upgrade |
+| **core-provider** (Krateo Composable Operations) | Takes a **Helm chart with a `values.schema.json`** referenced by a `CompositionDefinition` and generates a **versioned CRD** (group `composition.krateo.io`). Starts one dedicated controller per definition |
+| **composition-dynamic-controller (CDC)** | Reconciles instances of the generated CRD: renders the chart with the instance `spec` as values, applies it as a Helm release and keeps it aligned |
+| **chart-inspector** | Dry-runs the chart and tells the CDC which resources it touches, so that **least-privilege RBAC** is generated for each composition |
+| **Composable Portal** | Frontend configured through CRDs: forms generated from the schema, catalog, views |
+| Other modules | FinOps (costs), events and audit, authentication; `krateoctl` for installation and upgrades |
 
-Il concetto chiave: **un chart diventa un'API**. Il team consumer non chiede un ticket: crea un oggetto `BoutiqueService` (YAML, Git o form del portale). Lo schema lo valida già all'ammissione, e il controller lo realizza.
+The key concept: **a chart becomes an API**. The consumer team does not open a ticket. It creates a `BoutiqueService` object through YAML, Git or a portal form. The schema validates it at admission, and the controller makes it real.
 
-Fonti: [docs.krateo.io](https://docs.krateo.io), repository [krateoplatformops/core-provider](https://github.com/krateoplatformops/core-provider). La regola con cui vengono generati gruppo, versione e kind della CRD è stata verificata leggendo il codice (`internal/tools/chart/chart.go`), non dedotta dalla documentazione.
+Sources: [docs.krateo.io](https://docs.krateo.io), the [krateoplatformops/core-provider](https://github.com/krateoplatformops/core-provider) repository. The rule that derives the generated CRD's group, version and kind was verified by reading the code (`internal/tools/chart/chart.go`), not inferred from the documentation.
 
-## 2. Cosa diventa golden path
+## 2. What becomes the golden path
 
-| Elemento della soluzione | Nel golden path? | Perché |
+| Element of the solution | In the golden path? | Why |
 |---|---|---|
-| Overlay Kustomize `dev`/`prod` (hardening, PSA, NetworkPolicy, probe, ServiceMonitor, RBAC) | **Sì, è il cuore** | Ogni istanza eredita le stesse garanzie del servizio di riferimento. Il team non può "dimenticare" la sicurezza |
-| Application Argo CD | **Sì** (generata dal chart) | Un solo motore di deploy (Argo CD) per istanze manuali e self-service: stessa osservabilità GitOps |
-| Gateway, monitoring, policy Kyverno, alert, dashboard | No: **servizi di piattaforma condivisi** | Si applicano in automatico alle nuove istanze (gli alert usano `namespace=~"boutique-.*"`, la dashboard ha il namespace come variabile, le policy selezionano per label) |
-| Secret `redis-auth` | No, **prerequisito della piattaforma** (oggi script, domani ExternalSecret nel chart) | I segreti non passano dal form del consumer |
-| Pipeline CI e immagine | Per ora no (vedi §4) | |
+| `dev`/`prod` Kustomize overlays (hardening, PSA, NetworkPolicies, probes, ServiceMonitor, RBAC) | **Yes, they are its core** | Every instance inherits the same guarantees as the reference service. A team cannot "forget" security |
+| Argo CD Application | **Yes** (generated by the chart) | A single deploy engine (Argo CD) for manual and self-service instances: same GitOps visibility |
+| Gateway, monitoring, Kyverno policies, alerts, dashboard | No: **shared platform services** | They apply automatically to new instances: alerts use `namespace=~"boutique-.*"`, the dashboard has the namespace as a variable, policies select by label |
+| `redis-auth` Secret | No, a **platform prerequisite** (a script today, an ExternalSecret in the chart tomorrow) | Secrets do not go through the consumer form |
+| CI pipeline and image | Not for now (see §4) | |
 
-Il chart è in `platform/krateo/boutique-service/`: **un solo template** (`application.yaml`) e uno **schema** (`values.schema.json`). Volutamente piccolo: tutta la complessità resta negli overlay, già testati.
+The chart lives in `platform/krateo/boutique-service/`. It has **a single template** (`application.yaml`) and a **schema** (`values.schema.json`). It is small on purpose: all the complexity stays in the overlays, which are already tested.
 
-## 3. Parametri esposti al team consumer
+## 3. Parameters exposed to the consumer team
 
-| Parametro richiesto dalla challenge | Nel form? | Campo / derivazione | Motivazione |
+| Parameter requested by the challenge | In the form? | Field / derivation | Rationale |
 |---|---|---|---|
-| Nome servizio | ✅ | `service.name` (regex DNS-safe) | |
-| Namespace | ❌ derivato | `boutique-<name>-<environment>` | Convenzione imposta: rende possibile il guardrail AppProject `boutique-*`, il selettore degli alert e le policy |
-| Ambiente | ✅ | `environment`: `dev` \| `prod` (enum) | Seleziona l'overlay, cioè un intero profilo operativo |
-| Risorse | ⚠️ indiretto | `service.tier`: `bronze` \| `silver` \| `gold` → tetto HPA 2/4/6 | Esporre CPU e memoria grezze porta a valori casuali. Il tier è una *taglia* governata dalla piattaforma |
-| Ingress | ✅ opzionale | `ingress.host` (default `<name>.<env>.boutique.local`) | |
-| Repository | ✅ | `git.repoURL` (solo `https://`), `git.targetRevision` | Consente fork o branch per team; l'AppProject limita comunque i repo ammessi |
-| Owner | ✅ | `service.owner` → label `platform.example.com/owner` **e** soggetto delle RoleBinding (`<owner>`, `<owner>-oncall`) | La proprietà diventa permessi, routing degli alert e attribuzione dei costi |
-| Tier applicativo | ✅ | `service.tier` | Vedi "Risorse"; usabile anche per SLO e priorità degli alert |
-| Versione frontend | ✅ | `frontend.version` (semver) | |
-| Progetto Argo CD, namespace di Argo CD | ❌ platform-owned | `argocd.*` | Non devono essere scelti dal consumer |
+| Service name | ✅ | `service.name` (DNS-safe regex) | |
+| Namespace | ❌ derived | `boutique-<name>-<environment>` | An enforced convention: it enables the `boutique-*` AppProject guardrail, the alert selector and the policies |
+| Environment | ✅ | `environment`: `dev` \| `prod` (enum) | Selects the overlay, i.e. a whole operational profile |
+| Resources | ⚠️ indirect | `service.tier`: `bronze` \| `silver` \| `gold` → HPA ceiling 2/4/6 | Raw CPU/memory inputs lead to arbitrary values. The tier is a *size* governed by the platform |
+| Ingress | ✅ optional | `ingress.host` (default `<name>.<env>.boutique.local`) | |
+| Repository | ✅ | `git.repoURL` (`https://` only), `git.targetRevision` | Allows per-team forks or branches; the AppProject still limits the allowed repos |
+| Owner | ✅ | `service.owner` → label `platform.example.com/owner` **and** RoleBinding subjects (`<owner>`, `<owner>-oncall`) | Ownership becomes permissions, alert routing and cost attribution |
+| Application tier | ✅ | `service.tier` | See "Resources"; can also drive SLOs and alert priority |
+| Frontend version | ✅ | `frontend.version` (semver) | |
+| Argo CD project, Argo CD namespace | ❌ platform-owned | `argocd.*` | Not for the consumer to choose |
 
-Lo schema rifiuta gli input non validi prima di ogni deploy. Esempio verificato con `jsonschema` sul file reale: `name: Team_A`, `tier: platinum`, `environment: staging`, `version: latest` e `repoURL: http://…` producono 5 errori.
+The schema rejects invalid input before any deploy. Example, verified with `jsonschema` against the real file: `name: Team_A`, `tier: platinum`, `environment: staging`, `version: latest` and `repoURL: http://…` produce 5 errors.
 
-## 4. Cosa potrebbe orchestrare Krateo oltre ai manifest
+## 4. What else Krateo could orchestrate
 
-| Oggetto | Come | Stato |
+| Object | How | Status |
 |---|---|---|
-| **Componenti Kubernetes** | Chart → Application Argo CD → overlay (PoC) | Implementato |
-| **Pipeline** | Una composition che crea il repository dal template (Krateo ha blueprint di scaffolding GitHub) e ci mette `platform-ci.yaml` | Blueprint |
-| **Database** | Redis gestito al posto di `redis-cart`: il chart crea un claim (Crossplane, ACK, ASO o operatore Redis) e un ExternalSecret con la connection string; l'overlay usa `components/managed-redis` | Blueprint |
-| **Servizi esterni** | Registrazione DNS, certificato TLS (cert-manager `Certificate`), monitor esterno: altre risorse nel chart | Blueprint |
-| **Risorse cloud** | Qualunque CRD (Crossplane/ACK/ASO) può far parte del chart: Krateo non impone un provider | Blueprint |
-| **Costi** | Il label `owner` è già su ogni workload: il modulo FinOps può aggregare per team | Prerequisito soddisfatto |
+| **Kubernetes components** | Chart → Argo CD Application → overlay (PoC) | Implemented |
+| **Pipelines** | A composition that creates the repository from a template (Krateo has GitHub scaffolding blueprints) and adds `platform-ci.yaml` | Blueprint |
+| **Databases** | Managed Redis instead of `redis-cart`: the chart creates a claim (Crossplane, ACK, ASO or a Redis operator) and an ExternalSecret with the connection string; the overlay uses `components/managed-redis` | Blueprint |
+| **External services** | DNS registration, TLS certificate (cert-manager `Certificate`), external monitor: more resources in the chart | Blueprint |
+| **Cloud resources** | Any CRD (Crossplane/ACK/ASO) can be part of the chart: Krateo does not impose a provider | Blueprint |
+| **Costs** | The `owner` label is already on every workload: the FinOps module can aggregate by team | Prerequisite met |
 
 ```mermaid
 flowchart LR
-  team([Team consumer]) -- form portale / YAML / PR --> cr[BoutiqueService<br/>composition.krateo.io/v0-1-0]
+  team([Consumer team]) -- portal form / YAML / PR --> cr[BoutiqueService<br/>composition.krateo.io/v0-1-0]
   subgraph krateo[Krateo - krateo-system]
-    cd[CompositionDefinition<br/>boutique-service 0.1.0] -- core-provider genera --> crd[(CRD + CDC + RBAC)]
+    cd[CompositionDefinition<br/>boutique-service 0.1.0] -- core-provider generates --> crd[(CRD + CDC + RBAC)]
     cdc[CDC boutique-service]
   end
-  cr -- valida schema --> crd
-  cr --> cdc -- helm upgrade --> app[Application Argo CD<br/>team-a-dev]
-  app -- legge --> git[(Git: platform/deploy/overlays/dev)]
+  cr -- schema validation --> crd
+  cr --> cdc -- helm upgrade --> app[Argo CD Application<br/>team-a-dev]
+  app -- reads --> git[(Git: platform/deploy/overlays/dev)]
   app -- kustomize namespace, image,<br/>labels, hostname, RBAC --> ns[namespace boutique-team-a-dev]
-  ns -. automaticamente .-> plat[Gateway · alert · dashboard ·<br/>Kyverno · PSA]
+  ns -. automatically .-> plat[Gateway · alerts · dashboard ·<br/>Kyverno · PSA]
 ```
 
 ## 5. PoC
 
-**Cosa c'è:**
+**What is included:**
 
-| File | Contenuto |
+| File | Content |
 |---|---|
-| `platform/krateo/boutique-service/` | Chart golden path (`Chart.yaml`, `values.schema.json`, `templates/application.yaml`) |
-| `platform/krateo/krateo/compositiondefinition.yaml` | Registrazione del chart in Krateo |
-| `platform/krateo/krateo/composition-example.yaml` | Istanza di esempio (`BoutiqueService` in prod, tier silver) |
-| `platform/krateo/appproject-selfservice.yaml` | Guardrail Argo CD per le istanze self-service |
+| `platform/krateo/boutique-service/` | Golden-path chart (`Chart.yaml`, `values.schema.json`, `templates/application.yaml`) |
+| `platform/krateo/krateo/compositiondefinition.yaml` | Registers the chart with Krateo |
+| `platform/krateo/krateo/composition-example.yaml` | Example instance (`BoutiqueService` in prod, silver tier) |
+| `platform/krateo/appproject-selfservice.yaml` | Argo CD guardrail for self-service instances |
 | `platform/scripts/krateo-poc.sh` | `package` → `install` → `status` → `cleanup` |
 
-**Esecuzione:**
+**Running it:**
 
 ```bash
-platform/scripts/krateo-poc.sh package      # helm lint + package in platform/krateo/dist/
+platform/scripts/krateo-poc.sh package      # helm lint + package into platform/krateo/dist/
 git add platform/krateo/dist && git commit -m "krateo: package boutique-service 0.1.0" && git push
-platform/scripts/krateo-poc.sh install      # core-provider + definition + istanza team-a-dev
+platform/scripts/krateo-poc.sh install      # core-provider + definition + team-a-dev instance
 platform/scripts/krateo-poc.sh status
 ```
 
-**Cosa dimostra**: da un oggetto `BoutiqueService` di 15 righe nasce un ambiente completo e conforme in `boutique-team-a-dev`, con le stesse policy e lo stesso monitoring, l'hostname dedicato e l'RBAC del team owner. Il tutto senza che il team scriva un manifest Kubernetes.
+**What it demonstrates**: a 15-line `BoutiqueService` object produces a complete, compliant environment in `boutique-team-a-dev`. It gets the same policies and monitoring, a dedicated hostname and the owner team's RBAC. The team writes no Kubernetes manifest.
 
-**Scelte e semplificazioni:**
-- Si installa solo il **core-provider** (con chart-inspector), non tutta la suite PlatformOps: è il componente che rende il chart un'API e sta nella VM. Il portale andrebbe in un'adozione vera.
-- Il chart viene servito come `.tgz` dal repository (URL raw di GitHub) per non dover gestire credenziali di registry. In produzione: registry OCI (`helm push … oci://ghcr.io/<org>/charts`).
-- Il Secret dell'istanza è creato dallo script (prerequisito di piattaforma).
+**Choices and simplifications:**
+- Only **core-provider** (with chart-inspector) is installed, not the whole PlatformOps suite. It is the component that turns the chart into an API, and it fits in the VM. A real adoption would add the portal.
+- The chart is served as a `.tgz` from the repository (raw GitHub URL), to avoid handling registry credentials. Production: an OCI registry (`helm push … oci://ghcr.io/<org>/charts`).
+- The instance Secret is created by the script (platform prerequisite).
 
-**Da verificare durante l'esecuzione** (non verificabile senza cluster): che il CDC ottenga da chart-inspector i permessi per creare Application nel namespace `argocd` (risorsa fuori dal namespace dell'istanza) e la resa del form nel portale. Se il primo punto non funziona, l'alternativa è che il chart renderizzi direttamente i manifest (senza Argo CD), perdendo però l'uniformità GitOps.
+**To verify during execution** (not verifiable without a cluster):
+- whether the CDC gets the permissions from chart-inspector to create Applications in the `argocd` namespace (a resource outside the instance namespace);
+- how the form renders in the portal.
 
-## 6. Benefici, prerequisiti, limiti, rischi
+If the first point does not work, the alternative is for the chart to render the manifests directly, without Argo CD. That loses GitOps uniformity.
 
-**Benefici**
-- **Self-service con guardrail**: il team ottiene un ambiente in minuti, entro i confini decisi dalla piattaforma (schema, AppProject, policy).
-- **API Kubernetes-native**: le richieste sono oggetti versionati, quindi gestibili via GitOps, auditabili e con `kubectl get boutiqueservices -A` come inventario.
-- **Riuso degli asset esistenti**: Helm chart e JSON Schema, niente DSL proprietario. Il chart funziona anche senza Krateo (`helm install`), quindi il lock-in è basso.
-- **RBAC minima generata** per ogni composition (chart-inspector).
-- **Ownership e costi**: il label owner obbligatorio si collega al modulo FinOps.
+## 6. Benefits, prerequisites, limits, risks
 
-**Prerequisiti**
-- Kubernetes ≥ 1.30 e Helm 3 (core-provider).
-- Golden path stabile e testato: qui gli overlay, con CI che li valida.
-- Registry OCI per i chart, versionamento semver e processo di rilascio dei chart.
-- Identity provider (OIDC) per portale e gruppi RBAC.
-- Gestione dei segreti automatica (External Secrets), altrimenti il self-service si ferma al Secret.
-- Ownership chiara del platform team su chart, schema e upgrade di Krateo.
+**Benefits**
+- **Self-service with guardrails**: a team gets an environment in minutes, within the boundaries set by the platform (schema, AppProject, policies).
+- **Kubernetes-native API**: requests are versioned objects. They can be managed through GitOps, audited, and listed with `kubectl get boutiqueservices -A` as an inventory.
+- **Reuse of existing assets**: Helm chart and JSON Schema, no proprietary DSL. The chart also works without Krateo (`helm install`), so lock-in is low.
+- **Least-privilege RBAC generated** per composition (chart-inspector).
+- **Ownership and costs**: the mandatory owner label connects to the FinOps module.
 
-**Limiti**
-- Una composition è "un chart renderizzato": la logica condizionale complessa resta nei template Helm, che diventano difficili da mantenere se crescono.
-- **Evoluzione dello schema**: ogni versione del chart genera una nuova versione della CRD. Le migrazioni delle istanze esistenti vanno pianificate (Krateo documenta strategie *full*, *parallel* e *selective*), con un costo operativo reale.
-- Doppio livello in questa PoC (Krateo → Helm → Argo CD → Kustomize): potente ma con più punti di diagnosi. Il runbook dovrebbe coprire anche `kubectl get boutiqueservice -o yaml` (condizioni) e i log del CDC.
-- Prodotto con community più piccola di Backstage o Crossplane: meno risposte pronte, più dipendenza dal vendor per il supporto.
+**Prerequisites**
+- Kubernetes ≥ 1.30 and Helm 3 (core-provider).
+- A stable, tested golden path: here, the overlays, with CI validating them.
+- An OCI registry for charts, semver versioning and a chart release process.
+- An identity provider (OIDC) for the portal and the RBAC groups.
+- Automated secret management (External Secrets); otherwise self-service stops at the Secret.
+- Clear platform-team ownership of the chart, the schema and Krateo upgrades.
 
-**Rischi**
-- **Il portale diventa il prodotto**: senza manutenzione del golden path, il self-service rilascia debito tecnico in serie.
-- **Webhook e controller nel percorso critico**: un guasto di core-provider o del CDC blocca creazione e modifica delle istanze (non quelle già in esecuzione, che restano gestite da Argo CD).
-- **Duplicazione con strumenti esistenti** (Backstage, Crossplane, ServiceNow): serve una decisione su chi è la "porta d'ingresso".
-- **Permessi del CDC**: se il chart crea risorse in namespace condivisi (qui `argocd`), va verificato con attenzione cosa può fare il controller.
+**Limits**
+- A composition is "a rendered chart": complex conditional logic stays in Helm templates, which become hard to maintain as they grow.
+- **Schema evolution**: every chart version generates a new CRD version. Migrating existing instances must be planned (Krateo documents *full*, *parallel* and *selective* strategies), and it has a real operational cost.
+- Double layering in this PoC (Krateo → Helm → Argo CD → Kustomize): powerful, but with more places to diagnose. The runbook should also cover `kubectl get boutiqueservice -o yaml` (conditions) and the CDC logs.
+- A smaller community than Backstage or Crossplane: fewer ready answers, more reliance on the vendor for support.
 
-## 7. Raccomandazione: se, quando, come
+**Risks**
+- **The portal becomes the product**: without maintenance of the golden path, self-service ships technical debt at scale.
+- **Webhooks and controllers on the critical path**: a core-provider or CDC failure blocks creating and changing instances. Running instances are not affected, because Argo CD keeps managing them.
+- **Overlap with existing tools** (Backstage, Crossplane, ServiceNow): someone must decide which one is the "front door".
+- **CDC permissions**: if the chart creates resources in shared namespaces (here `argocd`), what the controller can do must be checked carefully.
 
-| Fase | Quando | Cosa | Criterio di uscita |
+## 7. Recommendation: whether, when, how
+
+| Phase | When | What | Exit criteria |
 |---|---|---|---|
-| **PoC** (questa) | Ora | core-provider + 1 chart + 1 istanza | Istanza creata e conforme; tempo da richiesta a servizio misurato |
-| **Pilota** | Quando ≥ 2 team chiedono ambienti simili, o quando i ticket "creami un namespace o ambiente" diventano un collo di bottiglia | Portale + OIDC + External Secrets + registry OCI; 1–2 team reali; SLO sul tempo di provisioning | Lead time, numero di ticket evitati, NPS dei team, incidenti causati dal golden path |
-| **Adozione** | Dopo il pilota, se i criteri sono raggiunti | Catalogo con più golden path (servizio web, worker, DB gestito), FinOps per owner, processo di versionamento dei chart | — |
+| **PoC** (this one) | Now | core-provider + 1 chart + 1 instance | Instance created and compliant; request-to-service time measured |
+| **Pilot** | When ≥ 2 teams ask for similar environments, or when "create a namespace/environment for me" tickets become a bottleneck | Portal + OIDC + External Secrets + OCI registry; 1–2 real teams; an SLO on provisioning time | Lead time, tickets avoided, team NPS, incidents caused by the golden path |
+| **Adoption** | After the pilot, if the criteria are met | Catalog with more golden paths (web service, worker, managed DB), FinOps by owner, chart versioning process | — |
 
-**Perché non subito:** oggi c'è **un solo servizio** e **un solo team**. Il costo di un portale (installazione, upgrade, OIDC, schema versioning, formazione) supererebbe il beneficio. La PoC dimostra che *il meccanismo funziona* e che gli asset prodotti (overlay, schema, label di ownership, AppProject) sono **già nella forma giusta** per adottarlo quando conviene. Questo è il punto: preparare la piattaforma in modo che Krateo sia un'aggiunta, non una riscrittura.
+**Why not right away:** today there is **one service** and **one team**. The cost of a portal (installation, upgrades, OIDC, schema versioning, training) would exceed the benefit. The PoC proves that *the mechanism works* and that the assets produced (overlays, schema, ownership labels, AppProjects) are **already in the right shape** to adopt it when it pays off. That is the point: prepare the platform so that Krateo is an addition, not a rewrite.

@@ -1,45 +1,48 @@
-# Architettura
+# Architecture
 
-Il documento ha tre livelli: l'**applicazione** (cosa fa Online Boutique e come comunicano i servizi), la **piattaforma** (cosa le gira attorno per rilasciarla ed esercirla) e le **scelte** (perché così, cosa si perde).
+This document has three levels:
+1. the **application**: what Online Boutique does and how its services talk to each other;
+2. the **platform**: what runs around it to release and operate it;
+3. the **choices**: why things are this way, and what we give up.
 
-## 1. Architettura applicativa
+## 1. Application architecture
 
-### Mappa sullo schema richiesto dalla challenge
+### Mapping to the challenge's reference model
 
-| Ruolo nello scenario | Componente in Online Boutique |
+| Role in the scenario | Online Boutique component |
 |---|---|
-| Client / API consumer | Browser degli utenti e `loadgenerator` (Locust) che simula traffico |
-| Ingress / Route | Gateway API: `Gateway` condiviso in `gateway-infra` + `HTTPRoute` per ambiente |
-| API service | `frontend` (Go, HTTP): unico punto d'ingresso, orchestra le chiamate gRPC |
-| Worker / componente secondario | `checkoutservice` (orchestrazione dell'ordine), `emailservice` (conferma, effetto collaterale), `recommendationservice`, `adservice` (elaborazioni accessorie, non bloccanti) |
-| Database / cache | `redis-cart` (stato del carrello) |
-| ConfigMap / Secret | Indirizzi dei servizi via env (Kustomize); credenziali Redis nel Secret `redis-auth` |
-| CI/CD / GitOps | GitHub Actions (build, test, validazione) + Argo CD (deploy) |
-| Monitoring / logging | kube-prometheus-stack (Prometheus, Grafana, kube-state-metrics), log JSON su stdout |
-| Krateo | Layer self-service: chart golden path esposto come API `BoutiqueService` |
+| Client / API consumer | Users' browsers and the `loadgenerator` (Locust) that simulates traffic |
+| Ingress / Route | Gateway API: shared `Gateway` in `gateway-infra` + one `HTTPRoute` per environment |
+| API service | `frontend` (Go, HTTP): the single entry point, orchestrates the gRPC calls |
+| Worker / secondary component | `checkoutservice` (order orchestration), `emailservice` (confirmation, side effect), `recommendationservice`, `adservice` (ancillary, non-blocking processing) |
+| Database / cache | `redis-cart` (cart state) |
+| ConfigMap / Secret | Service addresses via env (Kustomize); Redis credentials in the `redis-auth` Secret |
+| CI/CD / GitOps | GitHub Actions (build, test, validation) + Argo CD (deploy) |
+| Monitoring / logging | kube-prometheus-stack (Prometheus, Grafana, kube-state-metrics), JSON logs on stdout |
+| Krateo | Self-service layer: golden-path chart exposed as a `BoutiqueService` API |
 
-Online Boutique non ha un worker asincrono con coda: il checkout è **sincrono** (una richiesta HTTP attende sei chiamate gRPC). È un limite di design utile per la discussione: gli errori di email e svuotamento del carrello sono tollerati (solo un warning nei log), mentre la loro *latenza* resta nel percorso della richiesta. Vedi §4.
+Online Boutique has no asynchronous worker with a queue: checkout is **synchronous**. One HTTP request waits for six gRPC calls. This design limit is worth discussing. Email and cart-emptying errors are tolerated and only logged as a warning, but their *latency* is still on the request path. See §4.
 
-### Componenti
+### Components
 
-| Servizio | Linguaggio | Porta | Protocollo | Responsabilità | Dipende da |
+| Service | Language | Port | Protocol | Responsibility | Depends on |
 |---|---|---|---|---|---|
-| frontend | Go | 8080 (Service 80), **9090 metriche** | HTTP | UI web, sessione (cookie), orchestrazione | catalog, currency, cart, recommendation, shipping, checkout, ad |
-| productcatalogservice | Go | 3550 | gRPC | Catalogo prodotti (da file JSON) | — |
-| currencyservice | Node.js | 7000 | gRPC | Conversione valuta (tassi statici) | — |
-| cartservice | C# | 7070 | gRPC | Carrello per sessione | redis-cart |
-| redis-cart | Redis | 6379 | TCP/RESP | Store del carrello (`emptyDir`) | — |
-| recommendationservice | Python | 8080 | gRPC | Prodotti suggeriti | productcatalog |
-| shippingservice | Go | 50051 | gRPC | Preventivo e "spedizione" (tracking fittizio) | — |
-| checkoutservice | Go | 5050 | gRPC | Orchestrazione ordine | catalog, cart, currency, shipping, payment, email |
-| paymentservice | Node.js | 50051 | gRPC | Addebito simulato su carta | — |
-| emailservice | Python | 8080 (Service 5000) | gRPC | Email di conferma (simulata, solo log) | — |
-| adservice | Java | 9555 | gRPC | Banner contestuali | — |
-| loadgenerator | Python (Locust) | — | HTTP | Traffico sintetico verso il frontend | frontend |
+| frontend | Go | 8080 (Service 80), **9090 metrics** | HTTP | Web UI, session (cookie), orchestration | catalog, currency, cart, recommendation, shipping, checkout, ad |
+| productcatalogservice | Go | 3550 | gRPC | Product catalog (from a JSON file) | — |
+| currencyservice | Node.js | 7000 | gRPC | Currency conversion (static rates) | — |
+| cartservice | C# | 7070 | gRPC | Per-session cart | redis-cart |
+| redis-cart | Redis | 6379 | TCP/RESP | Cart store (`emptyDir`) | — |
+| recommendationservice | Python | 8080 | gRPC | Suggested products | productcatalog |
+| shippingservice | Go | 50051 | gRPC | Shipping quote and "shipment" (fake tracking) | — |
+| checkoutservice | Go | 5050 | gRPC | Order orchestration | catalog, cart, currency, shipping, payment, email |
+| paymentservice | Node.js | 50051 | gRPC | Simulated card charge | — |
+| emailservice | Python | 8080 (Service 5000) | gRPC | Confirmation email (simulated, logs only) | — |
+| adservice | Java | 9555 | gRPC | Contextual ads | — |
+| loadgenerator | Python (Locust) | — | HTTP | Synthetic traffic to the frontend | frontend |
 
-Le dipendenze in tabella sono verificate sulle variabili d'ambiente `*_SERVICE_ADDR` dei manifest, non dedotte dalla documentazione.
+The dependencies in the table come from the `*_SERVICE_ADDR` environment variables in the manifests. They are not inferred from the documentation.
 
-### Flussi
+### Flows
 
 ```mermaid
 flowchart LR
@@ -67,11 +70,11 @@ flowchart LR
   co -- gRPC --> pc & cart & cur & ship & pay & mail
 ```
 
-**Flusso critico: `POST /cart/checkout`**
+**Critical flow: `POST /cart/checkout`**
 
 ```mermaid
 sequenceDiagram
-  participant U as Utente
+  participant U as User
   participant F as frontend
   participant C as checkout
   participant K as cart
@@ -83,12 +86,12 @@ sequenceDiagram
   U->>F: POST /cart/checkout (form)
   F->>C: PlaceOrder
   C->>K: GetCart
-  loop per ogni articolo
+  loop for each item
     C->>P: GetProduct
     C->>X: Convert
   end
   C->>S: GetQuote
-  C->>X: Convert (spedizione)
+  C->>X: Convert (shipping)
   C->>Y: Charge
   C->>S: ShipOrder
   C->>K: EmptyCart
@@ -97,110 +100,119 @@ sequenceDiagram
   F-->>U: 200 "Your order is complete!"
 ```
 
-Un errore su carrello, catalogo, valuta, preventivo, **pagamento** o **spedizione** diventa un **500 sul frontend per la route `/cart/checkout`**, mentre le altre pagine continuano a funzionare. Gli errori di `EmptyCart` e di `SendOrderConfirmation` invece sono tollerati: l'ordine va comunque a buon fine, con un warning nei log di checkout (verificato in `src/checkoutservice/main.go`, `PlaceOrder`). È esattamente ciò che misurano la metrica `boutique_frontend_http_requests_total{route="/cart/checkout",code="500"}` e l'alert `BoutiqueCheckoutFailing`.
+An error in cart, catalog, currency, quote, **payment** or **shipping** becomes a **500 on the frontend for the `/cart/checkout` route**, while every other page keeps working. Errors from `EmptyCart` and `SendOrderConfirmation` are tolerated: the order still succeeds, with a warning in the checkout logs (verified in `src/checkoutservice/main.go`, `PlaceOrder`). This is exactly what the metric `boutique_frontend_http_requests_total{route="/cart/checkout",code="500"}` and the `BoutiqueCheckoutFailing` alert measure.
 
-### Stato, configurazione, segreti
+### State, configuration, secrets
 
-- **Stato**: solo `redis-cart`, su `emptyDir`. I dati si perdono al riavvio del pod (scelta upstream, accettabile per un carrello demo; in produzione: Redis gestito o StatefulSet con PVC e replica).
-- **Configurazione**: variabili d'ambiente nei manifest (indirizzi dei servizi, `USERS` del load generator, `METRICS_PORT`). Le differenze tra ambienti sono patch Kustomize negli overlay.
-- **Segreti**: `redis-auth` (password + connection string per StackExchange.Redis), generato per ambiente da `create-secrets.sh` e mai salvato in Git.
+- **State**: only `redis-cart`, on `emptyDir`. Data is lost when the pod restarts. This is the upstream choice, acceptable for a demo cart. In production: managed Redis, or a StatefulSet with a PVC and replication.
+- **Configuration**: environment variables in the manifests (service addresses, the load generator's `USERS`, `METRICS_PORT`). Differences between environments are Kustomize patches in the overlays.
+- **Secrets**: `redis-auth` (password + connection string for StackExchange.Redis). `create-secrets.sh` generates it per environment, and it is never stored in Git.
 
-### Punti di estensione
+### Extension points
 
-- Componenti Kustomize upstream già pronti: Istio/ASM, Memorystore, Spanner, AlloyDB, Cloud Operations (tracing), `without-loadgenerator`.
-- Tracing: tutti i servizi supportano OpenTelemetry (`ENABLE_TRACING`, `COLLECTOR_SERVICE_ADDR`). Basterebbe un collector OTLP con backend Jaeger/Tempo.
-- `productCatalogService.extraLatency`: iniezione di latenza, utile per testare l'alert di latenza.
+- Upstream Kustomize components ready to use: Istio/ASM, Memorystore, Spanner, AlloyDB, Cloud Operations (tracing), `without-loadgenerator`.
+- Tracing: every service supports OpenTelemetry (`ENABLE_TRACING`, `COLLECTOR_SERVICE_ADDR`). An OTLP collector with a Jaeger/Tempo backend would be enough.
+- `productCatalogService.extraLatency`: latency injection, useful to test the latency alert.
 
-## 2. Architettura di piattaforma
+## 2. Platform architecture
 
 ```mermaid
 flowchart TB
   dev([Developer]) -- git push --> gh[(GitHub<br/>fork)]
   gh -- trigger --> ci[GitHub Actions<br/>lint · validate · test · build · Trivy]
   ci -- push image --> ghcr[(GHCR)]
-  subgraph kind[cluster kind - nodo singolo]
+  subgraph kind[kind cluster - single node]
     argo[Argo CD]
-    subgraph platform[platform-team]
+    subgraph platform[platform team]
       gwi[gateway-infra<br/>Gateway]
       mon[monitoring<br/>Prometheus · Grafana]
-      kyv[kyverno<br/>policy]
+      kyv[kyverno<br/>policies]
     end
     devns[boutique-dev]
     prodns[boutique-prod]
     krateo[krateo-system<br/>core-provider PoC]
   end
-  gh -- pull ogni 60s --> argo
+  gh -- pull every 60s --> argo
   argo -- sync --> platform & devns & prodns
-  krateo -. crea Application .-> argo
-  cpk[cloud-provider-kind<br/>container sul host] -. IP LoadBalancer / Gateway .-> gwi
-  browser([Browser nella VM]) -- dev.boutique.local / boutique.local --> gwi
+  krateo -. creates Application .-> argo
+  cpk[cloud-provider-kind<br/>container on the host] -. LoadBalancer / Gateway IP .-> gwi
+  browser([Browser in the VM]) -- dev.boutique.local / boutique.local --> gwi
 ```
 
-### Responsabilità
+### Responsibilities
 
-| Chi | Possiede | Strumento |
+| Who | Owns | Tool |
 |---|---|---|
-| Platform team | Cluster, Gateway, monitoring, policy, AppProject, golden path | `bootstrap.sh` (Helm), Argo CD app `platform-config`, chart Krateo |
-| Team applicativo | Overlay del proprio servizio (versione, parametri), codice | PR su Git → Argo CD app `boutique-<env>` |
-| CI | Qualità e artefatti (immagini) | GitHub Actions, nessun accesso al cluster |
-| Argo CD | Allineamento cluster ↔ Git | Sync automatico, self-heal in prod |
+| Platform team | Cluster, Gateway, monitoring, policies, AppProjects, golden path | `bootstrap.sh` (Helm), Argo CD app `platform-config`, Krateo chart |
+| Application team | Its service overlay (version, parameters), code | PR to Git → Argo CD app `boutique-<env>` |
+| CI | Quality and artifacts (images) | GitHub Actions, no cluster access |
+| Argo CD | Keeping cluster and Git aligned | Automatic sync, self-heal in prod |
 
-### Flusso di rilascio (GitOps)
+### Release flow (GitOps)
 
-1. Il codice cambia, la CI testa e produce l'immagine (in locale: `build-frontend.sh` + `kind load`).
-2. Il rilascio è **un commit** che cambia `images[].newTag` nell'overlay (`release.sh`).
-3. Argo CD rileva la differenza (polling ogni 60 s o sync esplicito) e applica.
-4. Il Deployment fa un rolling update con `maxUnavailable: 0`, `maxSurge: 1` e startup/readiness probe: nessun pod vecchio viene tolto prima che quello nuovo sia pronto.
-5. Il rollback è **un `git revert`** (tracciato, revisionabile). `kubectl rollout undo` resta come via d'emergenza documentata.
+1. The code changes; CI tests it and produces the image. Locally: `build-frontend.sh` + `kind load`.
+2. A release is **a commit** that changes `images[].newTag` in the overlay (`release.sh`).
+3. Argo CD detects the difference (polling every 60 s, or an explicit sync) and applies it.
+4. The Deployment does a rolling update with `maxUnavailable: 0`, `maxSurge: 1` and startup/readiness probes. No old pod is removed before the new one is ready.
+5. A rollback is **a `git revert`**: tracked and reviewable. `kubectl rollout undo` remains as a documented emergency path.
 
-### Ambienti
+### Environments
 
 | | dev | prod |
 |---|---|---|
 | Namespace | `boutique-dev` | `boutique-prod` |
 | Host | dev.boutique.local | boutique.local |
 | Frontend | 1 replica | HPA 2–4 (CPU 80%), PDB `minAvailable: 1` |
-| Argo CD | auto-sync, **self-heal off** (si può sperimentare) | auto-sync, **self-heal on** (la deriva viene annullata) |
-| Team | operare (restart, rollback, scale, logs, port-forward) | sola lettura; oncall: restart/rollback/scale |
-| Carico | 3 utenti Locust | 5 utenti Locust |
+| Argo CD | auto-sync, **self-heal off** (experiments allowed) | auto-sync, **self-heal on** (drift is reverted) |
+| Team | operate (restart, rollback, scale, logs, port-forward) | read-only; on-call: restart/rollback/scale |
+| Load | 3 Locust users | 5 Locust users |
 
-Le differenze stanno solo in `overlays/<env>/kustomization.yaml` e nei pochi file accanto. Base e policy sono uguali, così ciò che è testato in dev è ciò che va in prod.
+The differences live only in `overlays/<env>/kustomization.yaml` and the few files next to it. Base and policies are identical, so what is tested in dev is what goes to prod.
 
-## 3. Scelte tecnologiche e trade-off
+## 3. Technology choices and trade-offs
 
-| Decisione | Alternative | Perché | Cosa si perde |
+| Decision | Alternatives | Why | What we give up |
 |---|---|---|---|
-| **Kustomize** sopra il base upstream | Helm chart upstream | Riuso del base senza fork dei template; diff leggibile; supporto nativo Argo CD; validabile offline | Niente "values" parametrici per i consumer → per il self-service si usa un piccolo chart (Krateo) che *genera* l'Application |
-| **Argo CD** | Flux | UI utile in demo e in troubleshooting (diff, history, health); AppProject come guardrail | Un componente in più da esercire (~400 MB RAM) |
-| **Gateway API** + cloud-provider-kind | ingress-nginx | ingress-nginx è stato ritirato dal progetto Kubernetes (fine manutenzione marzo 2026); Gateway API è lo standard successore; cloud-provider-kind lo implementa in locale senza controller aggiuntivi | Implementazione locale non adatta alla produzione: in un cluster reale si cambia `gatewayClassName` (Envoy Gateway, Istio, cloud LB). Su OpenShift: Route o Gateway API (OCP ≥ 4.19) |
-| **kind a nodo singolo** | 1 control-plane + 1 worker, k3d, minikube | Kubernetes upstream; 4 vCPU non giustificano un secondo kubelet | Nessuna demo di scheduling/drain multi-nodo |
-| **Metriche frontend con stdlib** | `prometheus/client_golang`, OTel metrics SDK | Diff minimo dall'upstream, `go.mod`/`go.sum` invariati, nessuna nuova dipendenza da verificare | Formato di esposizione scritto a mano (coperto da test): in un prodotto vero si usa la libreria ufficiale |
-| **Metriche su porta separata** (9090) | `/metrics` sulla porta pubblica | La HTTPRoute punta solo al Service `frontend:80`: le metriche non sono mai esposte all'esterno | Un Service in più (`frontend-metrics`) |
-| **Immagine side-loaded** (`kind load`) | Registry locale, pull da GHCR | Zero credenziali e zero dipendenza dalla rete per la demo; nome e tag identici a quelli che la CI pubblica | Il cluster non verifica la firma o la provenienza dell'immagine |
-| **Secret generati da script** | Sealed Secrets, External Secrets + Vault | Nessun componente in più; ogni ambiente ha la sua password casuale | Il Secret non è riconciliato da Git; rotazione manuale ([security](security.md)) |
-| **Kyverno** + PSA | Solo PSA, OPA Gatekeeper | PSA copre la sicurezza dei pod (built-in); Kyverno aggiunge governance (owner, tag immutabili) con policy YAML leggibili e PolicyReport | ~400 MB RAM, webhook di ammissione nel percorso critico |
-| **Alertmanager disabilitato** | Routing verso Slack/email | Risparmio di risorse; gli alert si leggono in Prometheus `/alerts` | Nessuna notifica push |
+| **Kustomize** on top of the upstream base | Upstream Helm chart | Reuses the base without forking templates; readable diff; native Argo CD support; can be validated offline | No parametric "values" for consumers → for self-service a small chart (Krateo) *generates* the Application |
+| **Argo CD** | Flux | The UI helps in the demo and in troubleshooting (diff, history, health); AppProjects as guardrails | One more component to operate (~400 MB RAM) |
+| **Gateway API** + cloud-provider-kind | ingress-nginx | ingress-nginx was retired by the Kubernetes project (end of maintenance March 2026); Gateway API is the standard successor; cloud-provider-kind implements it locally without extra controllers | The local implementation is not production-grade: on a real cluster you change `gatewayClassName` (Envoy Gateway, Istio, cloud LB). On OpenShift: Route, or Gateway API (OCP ≥ 4.19) |
+| **Single-node kind** | 1 control plane + 1 worker, k3d, minikube | Upstream Kubernetes; 4 vCPU do not justify a second kubelet | No multi-node scheduling/drain demo |
+| **Frontend metrics with the stdlib** | `prometheus/client_golang`, OTel metrics SDK | Minimal diff from upstream, `go.mod`/`go.sum` unchanged, no new dependency to vet | Hand-written exposition format (covered by tests): a real product would use the official library |
+| **Metrics on a separate port** (9090) | `/metrics` on the public port | The HTTPRoute only targets the `frontend:80` Service: metrics are never exposed outside | One more Service (`frontend-metrics`) |
+| **Side-loaded image** (`kind load`) | Local registry, pull from GHCR | No credentials and no network dependency for the demo; same name and tag CI publishes | The cluster does not verify image signature or provenance |
+| **Script-generated Secrets** | Sealed Secrets, External Secrets + Vault | No extra components; each environment gets its own random password | The Secret is not reconciled from Git; manual rotation ([security](security.md)) |
+| **Kyverno** + PSA | PSA only, OPA Gatekeeper | PSA covers pod security (built-in); Kyverno adds governance (owner, immutable tags) with readable YAML policies and PolicyReports | ~400 MB RAM, an admission webhook on the critical path |
+| **Alertmanager disabled** | Routing to Slack/email | Saves resources; alerts are read in Prometheus `/alerts` | No push notifications |
 
-## 4. Rischi architetturali dell'applicazione (osservazioni L2)
+## 4. Application architecture risks (L2 observations)
 
-1. **Checkout sincrono con 6 dipendenze**: la disponibilità del checkout è circa il prodotto delle disponibilità di catalogo, valuta, carrello, spedizione e pagamento. L'email non fa fallire l'ordine, ma è chiamata in modo sincrono: se rallenta, rallenta il checkout, e con un timeout lungo può farlo scadere lato utente. Miglioramento: invio email asincrono tramite coda (outbox pattern).
-2. **Liveness = readiness = `/_healthz` statico** sul frontend: il pod è "pronto" anche se i backend non rispondono. È voluto (una readiness legata alle dipendenze causerebbe guasti a cascata), ma significa che **i problemi a valle si vedono solo nelle metriche e nei log**, non nello stato dei pod. Lo scenario `netpol-typo` lo dimostra.
-3. **Redis senza persistenza né replica**: single point of failure per il carrello.
-4. **Nessun timeout o retry configurato a livello di piattaforma** (niente service mesh): i timeout sono quelli di default dei client gRPC.
+1. **Synchronous checkout with 6 dependencies.** Checkout availability is roughly the product of the availability of catalog, currency, cart, shipping and payment. Email does not fail the order, but it is called synchronously: if it slows down, checkout slows down, and with a long timeout the request can expire on the user side. Improvement: asynchronous email through a queue (outbox pattern).
+2. **Liveness = readiness = static `/_healthz`** on the frontend. The pod is "ready" even when the backends do not answer. This is intentional, because a dependency-based readiness would cause cascading failures. It means that **downstream problems show only in metrics and logs**, not in pod status. The `netpol-typo` scenario demonstrates it.
+3. **Redis without persistence or replication**: single point of failure for the cart.
+4. **No timeouts or retries configured at platform level** (no service mesh): timeouts are the gRPC client defaults.
 
 ## 5. Capacity
 
 <a id="capacity"></a>
-Le CPU request upstream valgono circa 1,6 CPU per ambiente (loadgenerator 300m, ad e cart 200m, gli altri 100m, redis 70m). Su un nodo da 4 vCPU con due ambienti, monitoring, Argo CD e Kyverno, lo scheduler lascerebbe pod in `Pending`. Il componente `kind-sizing` porta tutte le CPU request a **20m**, mentre limiti e memoria restano invariati: i pod possono comunque usare CPU libera fino al limite.
+Upstream CPU requests add up to about 1.6 CPU per environment: loadgenerator 300m, ad and cart 200m, the others 100m, redis 70m. A 4 vCPU node also runs two environments, monitoring, Argo CD and Kyverno, so the scheduler would leave pods `Pending`. The `kind-sizing` component sets every CPU request to **20m**. Limits and memory are unchanged, so pods can still use free CPU up to their limit.
 
-È un compromesso da laptop. In produzione le request vanno misurate (p95 di utilizzo reale da Prometheus, VPA in modalità *recommendation*) perché da esse dipendono scheduling, QoS e HPA. In prod il frontend ha la request reimpostata a 100m proprio perché l'HPA calcola l'utilizzo **rispetto alla request**: con 20m scalerebbe sempre al massimo.
+This is a laptop compromise. In production, requests must be measured: the p95 of real usage from Prometheus, or VPA in *recommendation* mode. Scheduling, QoS and the HPA all depend on them. In prod the frontend request is set back to 100m precisely because the HPA computes utilization **relative to the request**: with 20m it would always scale to the maximum.
 
-Stima della memoria nella VM: Online Boutique circa 1,2–1,5 GB per ambiente, Prometheus + Grafana circa 1–1,5 GB, Argo CD circa 0,4 GB, Kyverno circa 0,4 GB, nodo kind e sistema circa 1,5 GB. In totale 6–7 GB su 10.
+Memory estimate in the VM:
 
-## 6. OpenShift (nota)
+| Component | Estimate |
+|---|---|
+| Online Boutique, per environment | ~1.2–1.5 GB |
+| Prometheus + Grafana | ~1–1.5 GB |
+| Argo CD | ~0.4 GB |
+| Kyverno | ~0.4 GB |
+| kind node + system | ~1.5 GB |
+| **Total** | **6–7 GB out of 10** |
 
-Il progetto è pensato per Kubernetes vanilla, ma è portabile su OpenShift:
-- **Esposizione**: `Route` al posto di Gateway/HTTPRoute (oppure Gateway API, GA da OCP 4.19).
-- **Security**: i pod girano già come non-root con `drop: ALL` e seccomp, quindi compatibili con la SCC `restricted-v2`. Va però rimosso `runAsUser: 1000` (o usato un UID nel range del namespace), perché la SCC assegna un UID arbitrario.
-- **GitOps**: OpenShift GitOps (Argo CD) con le stesse Application.
-- **Monitoring**: *user workload monitoring* al posto di kube-prometheus-stack; ServiceMonitor e PrometheusRule restano validi.
+## 6. OpenShift (note)
+
+The project targets vanilla Kubernetes but can be ported to OpenShift:
+- **Exposure**: a `Route` instead of Gateway/HTTPRoute, or Gateway API (GA since OCP 4.19).
+- **Security**: pods already run as non-root with `drop: ALL` and seccomp, which fits the `restricted-v2` SCC. However, `runAsUser: 1000` must be removed (or set to a UID in the namespace range), because the SCC assigns an arbitrary UID.
+- **GitOps**: OpenShift GitOps (Argo CD) with the same Applications.
+- **Monitoring**: *user workload monitoring* instead of kube-prometheus-stack; ServiceMonitors and PrometheusRules stay valid.

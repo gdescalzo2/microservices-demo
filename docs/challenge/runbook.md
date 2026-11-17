@@ -1,83 +1,86 @@
-# Runbook operativo
+# Operations runbook
 
-Per chi è di turno su Online Boutique. Ogni alert Prometheus punta a una sezione di questo documento (`runbook_url`). Tutti i comandi assumono il contesto `kind-boutique`, l'ambiente in `$NS` e l'app Argo CD in `$APP`:
+For whoever is on call for Online Boutique. Every Prometheus alert links to a section of this document (`runbook_url`). All commands assume:
+- the `kind-boutique` context;
+- the environment in `$NS`;
+- the Argo CD app in `$APP`.
 
 ```bash
-export NS=boutique-dev APP=boutique-dev        # oppure boutique-prod
+export NS=boutique-dev APP=boutique-dev        # or boutique-prod
 alias k=kubectl
 ```
 
-## 0. Metodo
+## 0. Method
 
-Prima capire, poi cambiare. L'ordine:
+Understand first, then change. The order:
 
-1. **Sintomo**: cosa vede l'utente o quale alert scatta? Da quando?
-2. **Perimetro**: un ambiente o entrambi? Una route o tutte? Un pod o tutte le repliche? È cambiato qualcosa (rilascio, sync Argo CD, deriva manuale)?
-3. **Ipotesi**: al massimo 2 o 3, ordinate per probabilità ed economicità della verifica.
-4. **Evidenza**: eventi → stato dei pod → log → metriche → configurazione. Per ogni ipotesi, il comando che la conferma o la scarta.
-5. **Mitigazione**: prima ripristinare il servizio (rollback, sync da Git, scale), poi la correzione definitiva via Git.
-6. **Verifica**: smoke test, metriche tornate normali, alert risolto.
-7. **Chiusura**: cosa è successo, perché non l'abbiamo visto prima, cosa cambiamo (alert, test, policy).
+1. **Symptom**: what does the user see, or which alert fires? Since when?
+2. **Scope**: one environment or both? One route or all of them? One pod or every replica? Did something change (release, Argo CD sync, manual drift)?
+3. **Hypotheses**: 2–3 at most, ordered by likelihood and by how cheap they are to check.
+4. **Evidence**: events → pod status → logs → metrics → configuration. For each hypothesis, the command that confirms or rules it out.
+5. **Mitigation**: restore service first (rollback, sync from Git, scale), then the permanent fix through Git.
+6. **Verification**: smoke test, metrics back to normal, alert resolved.
+7. **Close-out**: what happened, why we did not see it earlier, what we change (alerts, tests, policies).
 
-**Domanda chiave in un sistema GitOps**: *il cluster è uguale a Git?* `kubectl -n argocd get app` mostra subito se c'è deriva (`OutOfSync`) o un sync fallito.
+**The key question in a GitOps system**: *does the cluster match Git?* `kubectl -n argocd get app` immediately shows drift (`OutOfSync`) or a failed sync.
 
-**Quando fare escalation** (al platform team o allo sviluppo):
-- il problema riguarda componenti condivisi (Gateway, Argo CD, Kyverno, nodo, DNS), cioè più namespace o tutti i servizi;
-- la correzione richiede un cambio di codice o di policy;
-- il rollback non risolve: il problema non è nell'ultimo rilascio;
-- c'è rischio di perdita dati o di sicurezza (Secret esposto, accesso anomalo).
+**When to escalate** (to the platform team or to development):
+- the problem involves shared components (Gateway, Argo CD, Kyverno, node, DNS), so several namespaces or every service;
+- the fix needs a code or policy change;
+- rollback does not help: the problem is not in the last release;
+- there is a risk of data loss or a security issue (exposed Secret, unusual access).
 
-Insieme all'escalation vanno passati: sintomo, orario d'inizio, ambiente, cosa è stato verificato ed escluso, cosa è stato già tentato.
+Hand over with the escalation: symptom, start time, environment, what was checked and ruled out, what was already tried.
 
-## 1. Verifica dello stato (checklist)
+## 1. Health verification (checklist)
 
 ```bash
-# GitOps: il cluster è allineato?
+# GitOps: is the cluster aligned?
 k -n argocd get applications
-#   SYNC = Synced, HEALTH = Healthy per platform-config, boutique-dev, boutique-prod
+#   SYNC = Synced, HEALTH = Healthy for platform-config, boutique-dev, boutique-prod
 
-# Workload
-k -n $NS get deploy                       # READY = desiderati/disponibili
-k -n $NS get pods -o wide                 # STATUS, RESTARTS, nodo
+# Workloads
+k -n $NS get deploy                       # READY = desired/available
+k -n $NS get pods -o wide                 # STATUS, RESTARTS, node
 k -n $NS get events --sort-by=.lastTimestamp | tail -20
 
-# Rete ed esposizione
-k -n gateway-infra get gateway boutique-gateway       # PROGRAMMED=True, ADDRESS valorizzato
+# Network and exposure
+k -n gateway-infra get gateway boutique-gateway       # PROGRAMMED=True, ADDRESS set
 k -n $NS get httproute frontend -o jsonpath='{.status.parents[0].conditions}' | jq
-k -n $NS get svc,endpointslices               # ogni Service con endpoint pronti
+k -n $NS get svc,endpointslices               # every Service has ready endpoints
 
-# Configurazione
-k -n $NS get secret redis-auth                 # deve esistere (non mostrarne il contenuto)
+# Configuration
+k -n $NS get secret redis-auth                 # must exist (do not print its content)
 k -n $NS describe deploy frontend | sed -n '/Environment/,/Mounts/p'
 
-# Funzionale
+# Functional
 platform/scripts/smoke-test.sh dev
 ```
 
-Health check disponibili:
+Available health checks:
 
-| Servizio | Liveness / readiness | Note |
+| Service | Liveness / readiness | Notes |
 |---|---|---|
-| frontend | HTTP `GET /_healthz` (porta 8080) + startup probe | statico, non verifica i backend |
-| servizi gRPC | `grpc` probe nativa Kubernetes (gRPC health protocol) | |
+| frontend | HTTP `GET /_healthz` (port 8080) + startup probe | static, does not check backends |
+| gRPC services | native Kubernetes `grpc` probe (gRPC health protocol) | |
 | redis-cart | TCP 6379 | |
-| loadgenerator | nessuna | eccezione nota (client di carico), segnalata da Kyverno in audit |
+| loadgenerator | none | known exception (load client), reported by Kyverno in audit |
 
 ```bash
-# provare un health check a mano
+# run a health check by hand
 k -n $NS port-forward deploy/frontend 8080:8080 & curl -s localhost:8080/_healthz; kill %1
 k -n $NS get pods -o custom-columns='POD:.metadata.name,READY:.status.containerStatuses[*].ready,RESTARTS:.status.containerStatuses[*].restartCount'
 ```
 
-Log (tutti in JSON su stdout):
+Logs (all JSON on stdout):
 
 ```bash
 k -n $NS logs deploy/frontend --since=10m | jq -r 'select(.severity!="debug") | [.timestamp,.severity,."http.req.path",."http.resp.status",.message] | @tsv' | tail
 k -n $NS logs deploy/checkoutservice --since=10m | tail -20
-k -n $NS logs deploy/frontend --previous      # log del container prima dell'ultimo restart
+k -n $NS logs deploy/frontend --previous      # logs of the container before its last restart
 ```
 
-Metriche (Prometheus: `kubectl -n monitoring port-forward svc/kube-prometheus-stack-prometheus 9090:9090`):
+Metrics (Prometheus: `kubectl -n monitoring port-forward svc/kube-prometheus-stack-prometheus 9090:9090`):
 
 ```promql
 sum by (route, code) (rate(boutique_frontend_http_requests_total{namespace="boutique-prod"}[5m]))
@@ -85,25 +88,32 @@ histogram_quantile(0.95, sum by (le, route) (rate(boutique_frontend_http_request
 count by (version) (boutique_frontend_build_info{namespace="boutique-prod"})
 ```
 
-## 2. Troubleshooting per sintomo
+## 2. Troubleshooting by symptom
 
 <a id="rb-frontend-errors"></a>
-### 2.1 Il frontend restituisce 5xx (`BoutiqueFrontendHighErrorRate`)
+### 2.1 The frontend returns 5xx (`BoutiqueFrontendHighErrorRate`)
 
-1. **Quale route?** Dashboard "Errors by route and code", oppure:
+1. **Which route?** Use the dashboard panel "Errors by route and code", or:
    `sum by (route, code) (rate(boutique_frontend_http_requests_total{namespace="$NS",code=~"5.."}[5m]))`
-2. La route individua il backend: `/` → catalog, currency, ad, recommendation, cart; `/product/{id}` → catalog, currency, recommendation, ad; `/cart` → cart (e quindi Redis), shipping; `/cart/checkout` → [§2.2](#rb-checkout).
-3. Nei log del frontend il messaggio d'errore contiene il servizio e il codice gRPC:
+2. The route points to the backend:
+
+   | Route | Backends |
+   |---|---|
+   | `/` | catalog, currency, ad, recommendation, cart |
+   | `/product/{id}` | catalog, currency, recommendation, ad |
+   | `/cart` | cart (and therefore Redis), shipping |
+   | `/cart/checkout` | see [§2.2](#rb-checkout) |
+3. The frontend error log names the service and the gRPC code:
    `k -n $NS logs deploy/frontend --since=10m | grep -i '"severity":"error"' | tail -5`
-   - `Unavailable` / `connection refused` → il backend non ha endpoint: `k -n $NS get endpointslices -l kubernetes.io/service-name=<svc>`
-   - `DeadlineExceeded` → backend lento o bloccato da una NetworkPolicy (i pacchetti scartati vanno in timeout, non in errore immediato)
-   - `Unauthenticated` / `NOAUTH` (cartservice) → password Redis non allineata, [§2.8](#rb-secret)
-4. Correlare con i cambiamenti recenti: `k -n argocd get app $APP -o jsonpath='{.status.history}' | jq '.[-3:]'`, `git log -5 -- platform/`.
+   - `Unavailable` / `connection refused` → the backend has no endpoints: `k -n $NS get endpointslices -l kubernetes.io/service-name=<svc>`
+   - `DeadlineExceeded` → slow backend, or traffic blocked by a NetworkPolicy (dropped packets time out instead of failing fast)
+   - `Unauthenticated` / `NOAUTH` (cartservice) → Redis password mismatch, see [§2.8](#rb-secret)
+4. Correlate with recent changes: `k -n argocd get app $APP -o jsonpath='{.status.history}' | jq '.[-3:]'`, `git log -5 -- platform/`.
 
 <a id="rb-checkout"></a>
-### 2.2 Gli ordini falliscono (`BoutiqueCheckoutFailing`)
+### 2.2 Orders fail (`BoutiqueCheckoutFailing`)
 
-Il checkout chiama cart, catalog, currency, shipping e payment (gli errori di email e di svuotamento carrello sono tollerati).
+Checkout calls cart, catalog, currency, shipping and payment. Email and cart-emptying errors are tolerated.
 
 ```bash
 k -n $NS logs deploy/checkoutservice --since=10m | grep -iE 'error|fail|warn' | tail
@@ -111,58 +121,64 @@ k -n $NS logs deploy/checkoutservice --since=10m | grep -iE 'error|fail|warn' | 
 #   "shipping error"         -> shippingservice
 #   "failed to get user cart"/"cart failure" -> cartservice / redis
 k -n $NS get pods -l 'app in (paymentservice,shippingservice,cartservice,redis-cart)'
-k -n $NS get networkpolicy                                   # qualcuna cambiata di recente?
-k -n argocd get app $APP                                      # OutOfSync = qualcuno ha toccato il cluster
+k -n $NS get networkpolicy                                   # any recent change?
+k -n argocd get app $APP                                      # OutOfSync = someone touched the cluster
 ```
 
-Se i pod sono tutti `Running`/`Ready` ma le chiamate vanno in timeout, la prima ipotesi è la **rete**: NetworkPolicy, oppure un Service con selector sbagliato.
+If every pod is `Running`/`Ready` but calls time out, the first hypothesis is the **network**: a NetworkPolicy, or a Service with the wrong selector.
 
 ```bash
 k -n $NS get networkpolicy paymentservice -o jsonpath='{.spec.ingress}' | jq
-k -n $NS get pods -l app=checkoutservice --show-labels     # il label reale da consentire
-# prova di connettività dal pod di checkout (immagine distroless: niente shell, usare un pod di debug):
+k -n $NS get pods -l app=checkoutservice --show-labels     # the real label to allow
+# connectivity test from the checkout pod (distroless image: no shell, use a debug container):
 k -n $NS debug -it deploy/checkoutservice --image=busybox:1.38.0 --target=server -- nc -zvw3 paymentservice 50051
 ```
 
-> Nota: `kubectl debug` crea un container effimero che PSA `restricted` può rifiutare. In quel caso usare la `--profile=restricted` (kubectl ≥ 1.30) o fare la verifica da un pod temporaneo con label `app=checkoutservice` in dev.
+> Note: `kubectl debug` creates an ephemeral container that PSA `restricted` may reject. In that case use `--profile=restricted` (kubectl ≥ 1.30), or run the test in dev from a temporary pod labelled `app=checkoutservice`.
 
-Mitigazione: dev → `platform/scripts/chaos.sh restore dev` (sync da Git). Prod → il self-heal di Argo CD riallinea da solo. Se il guasto viene da Git, `rollback.sh prod`.
+Mitigation:
+- dev → `platform/scripts/chaos.sh restore dev` (sync from Git);
+- prod → Argo CD self-heal realigns on its own;
+- if the fault comes from Git → `rollback.sh prod`.
 
 <a id="rb-latency"></a>
-### 2.3 Latenza alta (`BoutiqueFrontendLatencyHigh`)
+### 2.3 High latency (`BoutiqueFrontendLatencyHigh`)
 
-1. Su tutte le route o su una? Pannello "p95 latency by route".
-2. CPU throttling? Il limite di CPU del frontend è 200m:
+1. All routes or one? Check the "p95 latency by route" panel.
+2. CPU throttling? The frontend CPU limit is 200m:
    `sum by (pod) (rate(container_cpu_cfs_throttled_periods_total{namespace="$NS"}[5m])) / sum by (pod) (rate(container_cpu_cfs_periods_total{namespace="$NS"}[5m]))`
-3. Il nodo è saturo? `kubectl top node`, `kubectl top pods -n $NS --sort-by=cpu`
-4. HPA (prod): `k -n boutique-prod get hpa frontend`. È al massimo delle repliche? `TARGETS` mostra `<unknown>`? Allora metrics-server non risponde.
+3. Is the node saturated? `kubectl top node`, `kubectl top pods -n $NS --sort-by=cpu`
+4. HPA (prod): `k -n boutique-prod get hpa frontend`. Is it at max replicas? Does `TARGETS` show `<unknown>`? Then metrics-server is not responding.
 
 <a id="rb-metrics-down"></a>
-### 2.4 Prometheus non legge le metriche del frontend (`BoutiqueFrontendMetricsDown`)
+### 2.4 Prometheus cannot scrape the frontend (`BoutiqueFrontendMetricsDown`)
 
 ```bash
 k -n $NS get servicemonitor frontend
 k -n $NS get endpointslices -l kubernetes.io/service-name=frontend-metrics
-# Prometheus UI -> Status -> Targets -> "serviceMonitor/$NS/frontend/0": errore mostrato
+# Prometheus UI -> Status -> Targets -> "serviceMonitor/$NS/frontend/0": error shown there
 k -n $NS port-forward svc/frontend-metrics 19090:9090 & curl -s localhost:19090/metrics | head; kill %1
 ```
 
-Cause tipiche: frontend non pronto (non ci sono endpoint), porta `metrics` rinominata, oppure NetworkPolicy che blocca il namespace `monitoring`.
+Typical causes:
+- the frontend is not ready, so the Service has no endpoints;
+- the `metrics` port was renamed;
+- a NetworkPolicy blocks the `monitoring` namespace.
 
 <a id="rb-pod-waiting"></a>
-### 2.5 Pod bloccato: ImagePullBackOff, CrashLoopBackOff, CreateContainerConfigError (`BoutiqueContainerWaiting`, `BoutiquePodRestarting`)
+### 2.5 Stuck pod: ImagePullBackOff, CrashLoopBackOff, CreateContainerConfigError (`BoutiqueContainerWaiting`, `BoutiquePodRestarting`)
 
 ```bash
 k -n $NS get pods | grep -v Running
 k -n $NS describe pod <pod> | sed -n '/State:/,/Ready:/p;/Events:/,$p'
 ```
 
-| Reason | Significato | Cosa controllare |
+| Reason | Meaning | What to check |
 |---|---|---|
-| `ErrImagePull` / `ImagePullBackOff` | immagine o tag inesistente, registry irraggiungibile, credenziali | `describe` → messaggio del pull; tag nell'overlay; in kind: `docker exec boutique-control-plane crictl images \| grep frontend` |
-| `CrashLoopBackOff` | il processo esce subito | `k logs <pod> --previous`; exit code in `Last State` (137 = OOM o SIGKILL, 1/2 = errore applicativo, ad esempio una variabile d'ambiente mancante) |
-| `CreateContainerConfigError` | Secret o ConfigMap referenziato mancante | `describe` → "secret \"redis-auth\" not found" → [§2.8](#rb-secret) |
-| `RunContainerError` / `CreateContainerError` | vincoli di sicurezza o runtime | `describe`; ad esempio `readOnlyRootFilesystem` con un'app che scrive su disco |
+| `ErrImagePull` / `ImagePullBackOff` | image or tag does not exist, registry unreachable, credentials | `describe` → pull message; tag in the overlay; on kind: `docker exec boutique-control-plane crictl images \| grep frontend` |
+| `CrashLoopBackOff` | the process exits immediately | `k logs <pod> --previous`; exit code in `Last State` (137 = OOM or SIGKILL, 1/2 = application error, e.g. a missing environment variable) |
+| `CreateContainerConfigError` | referenced Secret or ConfigMap missing | `describe` → "secret \"redis-auth\" not found" → [§2.8](#rb-secret) |
+| `RunContainerError` / `CreateContainerError` | security or runtime constraints | `describe`; e.g. `readOnlyRootFilesystem` with an app that writes to disk |
 
 <a id="rb-oom"></a>
 ### 2.6 OOMKilled (`BoutiqueContainerOOMKilled`)
@@ -172,28 +188,30 @@ k -n $NS describe pod -l app=<svc> | grep -A5 'Last State'        # Reason: OOMK
 k -n $NS get deploy <svc> -o jsonpath='{.spec.template.spec.containers[0].resources}' | jq
 ```
 
-PromQL: consumo reale rispetto al limite.
+PromQL: actual usage against the limit.
 
 ```promql
 max by (pod) (container_memory_working_set_bytes{namespace="$NS",container="server"})
   / on (pod) group_left max by (pod) (kube_pod_container_resource_limits{namespace="$NS",resource="memory"})
 ```
 
-Il limite è sottodimensionato o c'è un leak? Se il working set cresce in modo continuo fino al limite, è un leak: escalation allo sviluppo. Se c'è un picco su un carico normale, il limite è troppo basso: correggerlo **in Git** (patch nell'overlay), mai solo con `kubectl set resources`, perché verrebbe annullato (prod) o resterebbe come deriva (dev).
+Is the limit too low, or is there a leak?
+- **Leak**: the working set grows steadily up to the limit. Escalate to development.
+- **Limit too low**: a spike under normal load. Fix it **in Git** (a patch in the overlay), never only with `kubectl set resources`: in prod the change would be reverted, in dev it would stay as drift.
 
 <a id="rb-rollout-stuck"></a>
-### 2.7 Rollout bloccato (`BoutiqueDeploymentReplicasMismatch`)
+### 2.7 Stuck rollout (`BoutiqueDeploymentReplicasMismatch`)
 
 ```bash
 k -n $NS rollout status deploy/frontend --timeout=10s
-k -n $NS get rs -l app=frontend            # vecchio RS ancora attivo, nuovo RS con pod non pronti
+k -n $NS get rs -l app=frontend            # old RS still active, new RS with pods not ready
 k -n $NS rollout history deploy/frontend
 ```
 
-Con `maxUnavailable: 0` un rollout fallito **non riduce la capacità**: i pod vecchi restano in servizio e il nuovo pod resta in errore. Il negozio funziona e il problema è solo che la nuova versione non entra. Dopo `progressDeadlineSeconds` (600 s) il Deployment segna `Progressing=False` e Argo CD mostra l'app come `Degraded`. Azione: [rollback](#3-rollback).
+With `maxUnavailable: 0` a failed rollout **does not reduce capacity**: the old pods stay in service and the new pod stays in error. The shop works; the only problem is that the new version does not get in. After `progressDeadlineSeconds` (600 s) the Deployment reports `Progressing=False` and Argo CD marks the app `Degraded`. Action: [rollback](#3-rollback).
 
 <a id="rb-secret"></a>
-### 2.8 Secret mancante o password Redis errata
+### 2.8 Missing Secret or wrong Redis password
 
 ```bash
 k -n $NS get secret redis-auth || platform/scripts/create-secrets.sh $NS
@@ -201,49 +219,49 @@ k -n $NS logs deploy/cartservice --since=10m | grep -iE 'redis|auth' | tail -5
 k -n $NS logs deploy/redis-cart --since=10m | tail -5
 ```
 
-Le variabili d'ambiente si leggono all'avvio: dopo aver creato o ruotato il Secret, riavviare Redis e cartservice (`create-secrets.sh --rotate` lo fa da solo).
+Environment variables are read at start-up. After creating or rotating the Secret, restart Redis and cartservice (`create-secrets.sh --rotate` does it for you).
 
-### 2.9 Argo CD: OutOfSync, Degraded, sync fallito
+### 2.9 Argo CD: OutOfSync, Degraded, failed sync
 
 ```bash
 k -n argocd get app $APP -o jsonpath='{.status.sync.status} {.status.health.status}{"\n"}'
 k -n argocd get app $APP -o jsonpath='{.status.operationState.message}{"\n"}'
 k -n argocd get app $APP -o json | jq '.status.resources[] | select(.status!="Synced" or .health.status!="Healthy") | {kind,name,status,health:.health.status,msg:.health.message}'
-argocd app diff $APP          # con la CLI (dopo argocd login)
+argocd app diff $APP          # with the CLI (after argocd login)
 ```
 
-| Messaggio | Causa |
+| Message | Cause |
 |---|---|
-| `admission webhook "validate.kyverno.svc-fail" denied the request` | La modifica viola una policy Enforce (tag `:latest`, label owner mancante). Correggere il manifest in Git |
-| `pods ... is forbidden: violates PodSecurity "restricted"` | Il container non rispetta PSA restricted (root, capability, seccomp) |
-| `resource ... is not permitted in project` | L'AppProject non consente quella risorsa o quel namespace (guardrail funzionante) |
-| `OutOfSync` senza errori | Deriva manuale (dev) oppure nuovo commit non ancora sincronizzato: `argocd_sync` o attendere il polling (60 s) |
+| `admission webhook "validate.kyverno.svc-fail" denied the request` | The change violates an Enforce policy (`:latest` tag, missing owner label). Fix the manifest in Git |
+| `pods ... is forbidden: violates PodSecurity "restricted"` | The container does not meet PSA restricted (root, capabilities, seccomp) |
+| `resource ... is not permitted in project` | The AppProject does not allow that resource or namespace (guardrail working as intended) |
+| `OutOfSync` with no errors | Manual drift (dev), or a new commit not synced yet: run `argocd_sync` or wait for polling (60 s) |
 
-### 2.10 Il sito non risponde (nessun pod in errore)
+### 2.10 The site does not respond (no pod in error)
 
 ```bash
-k -n gateway-infra get gateway boutique-gateway -o wide     # ADDRESS vuoto?
-docker ps --filter name=cloud-provider-kind                  # il controller sul host è attivo?
+k -n gateway-infra get gateway boutique-gateway -o wide     # ADDRESS empty?
+docker ps --filter name=cloud-provider-kind                  # is the controller on the host running?
 docker logs cloud-provider-kind --tail 30
-getent hosts dev.boutique.local                              # /etc/hosts punta all'IP attuale del Gateway?
+getent hosts dev.boutique.local                              # does /etc/hosts point to the current Gateway IP?
 curl -sv --resolve dev.boutique.local:80:$(k -n gateway-infra get gateway boutique-gateway -o jsonpath='{.status.addresses[0].value}') http://dev.boutique.local/_healthz
 k -n $NS get httproute frontend -o jsonpath='{.status}' | jq   # Accepted / ResolvedRefs
 ```
 
-Un `404` dal Gateway (e non dal frontend) significa che nessuna HTTPRoute corrisponde all'host. Cause tipiche: hostname sbagliato, oppure namespace senza il label `platform.example.com/gateway-access=true`.
+A `404` from the Gateway (not from the frontend) means no HTTPRoute matches the host. Typical causes: wrong hostname, or a namespace without the `platform.example.com/gateway-access=true` label.
 
 ## 3. Rollback
 
-| Situazione | Comando | Note |
+| Situation | Command | Notes |
 |---|---|---|
-| Rilascio difettoso, Git disponibile (**default**) | `platform/scripts/rollback.sh <env>` | `git revert` dell'ultimo commit sull'overlay → push → sync. Tracciato e revisionabile |
-| Emergenza, Git o CI non disponibili | `platform/scripts/rollback.sh <env> --emergency` | `kubectl rollout undo`; in prod sospende prima l'auto-sync. **Poi riallineare Git** e riattivare l'auto-sync |
-| Dalla UI di Argo CD | App → History and rollback → versione precedente | Disattiva l'auto-sync dell'app: va riattivato dopo aver corretto Git |
-| Deriva manuale (solo dev) | `platform/scripts/chaos.sh restore dev` | Sync da Git, annulla le modifiche fatte con kubectl |
+| Bad release, Git available (**default**) | `platform/scripts/rollback.sh <env>` | `git revert` of the last overlay commit → push → sync. Tracked and reviewable |
+| Emergency, Git or CI unavailable | `platform/scripts/rollback.sh <env> --emergency` | `kubectl rollout undo`; in prod it suspends auto-sync first. **Then realign Git** and re-enable auto-sync |
+| From the Argo CD UI | App → History and rollback → previous version | Disables auto-sync on the app: re-enable it after fixing Git |
+| Manual drift (dev only) | `platform/scripts/chaos.sh restore dev` | Sync from Git, undoes changes made with kubectl |
 
-Perché il default è `git revert` e non `kubectl rollout undo`: in prod il self-heal di Argo CD riporterebbe il cluster allo stato di Git (la versione rotta) entro circa un minuto. Il rollback "vero" deve passare dalla fonte di verità.
+Why the default is `git revert` and not `kubectl rollout undo`: in prod, Argo CD self-heal would bring the cluster back to the Git state (the broken version) within about a minute. The "real" rollback must go through the source of truth.
 
-Verifica dopo il rollback:
+After the rollback, verify:
 
 ```bash
 k -n $NS rollout status deploy/frontend
@@ -251,17 +269,17 @@ curl -sI http://boutique.local/ | grep -i x-app-version
 platform/scripts/smoke-test.sh prod
 ```
 
-In Grafana il pannello "Frontend version(s) running" mostra il passaggio di versione.
+In Grafana, the "Frontend version(s) running" panel shows the version change.
 
-## 4. Scenari di guasto riproducibili
+## 4. Reproducible failure scenarios
 
-`platform/scripts/chaos.sh <scenario> [dev|prod]`. Ogni scenario ha sintomo, diagnosi e ripristino:
+Run them with `platform/scripts/chaos.sh <scenario> [dev|prod]`. Each scenario has a symptom, a diagnosis and a restore:
 
-| Scenario | Sintomo | Come si diagnostica | Ripristino |
+| Scenario | Symptom | How it is diagnosed | Restore |
 |---|---|---|---|
-| `bad-image` | rollout bloccato, sito **ancora funzionante** | `rollout status` in stallo, pod nuovo `ImagePullBackOff`, alert `ContainerWaiting` | `chaos.sh restore` (dev) / `rollback.sh` |
-| `netpol-typo` | solo il checkout fallisce (500), tutto il resto OK, **pod tutti Ready** | metrica 5xx su `/cart/checkout`, log del frontend "failed to charge card" + timeout, NetworkPolicy con label sbagliato | `chaos.sh restore` |
-| `oom` | raccomandazioni vuote o errori sulla pagina prodotto, restart continui | `OOMKilled`, exit 137, limite 32Mi | `chaos.sh restore` |
-| `redis-down` | carrello e checkout falliscono | Service `redis-cart` senza endpoint, errori nei log di cartservice | `chaos.sh restore` (le repliche sono dichiarate in Git, quindi Argo CD vede la deriva) |
+| `bad-image` | rollout stuck, site **still working** | `rollout status` stalls, new pod `ImagePullBackOff`, `ContainerWaiting` alert | `chaos.sh restore` (dev) / `rollback.sh` |
+| `netpol-typo` | only checkout fails (500), everything else OK, **all pods Ready** | 5xx metric on `/cart/checkout`, frontend logs "failed to charge card" + timeouts, NetworkPolicy with the wrong label | `chaos.sh restore` |
+| `oom` | empty recommendations or errors on the product page, continuous restarts | `OOMKilled`, exit 137, 32Mi limit | `chaos.sh restore` |
+| `redis-down` | cart and checkout fail | `redis-cart` Service without endpoints, errors in cartservice logs | `chaos.sh restore` (replicas are declared in Git, so Argo CD sees the drift) |
 
-In prod gli stessi scenari mostrano il **self-heal**: Argo CD rileva la deriva e la annulla da solo (`k -n argocd get app boutique-prod -w`).
+In prod the same scenarios show **self-heal**: Argo CD detects the drift and undoes it on its own (`k -n argocd get app boutique-prod -w`).

@@ -1,38 +1,44 @@
-# Copione della demo (circa 45 minuti)
+# Demo script (about 45 minutes)
 
-Ogni passo corrisponde a un punto obbligatorio della challenge (§7). **Preparazione**: cluster già avviato con `bootstrap.sh` (la prima installazione richiede 15–25 minuti e non va fatta dal vivo). Tenere aperti 4 terminali e 3 tab del browser.
+Each step maps to one mandatory point of the challenge (§7).
 
-| Terminale | Contenuto |
+**Preparation**: the cluster is already up with `bootstrap.sh`. The first install takes 15–25 minutes, so it is not done live. Keep 4 terminals and 3 browser tabs open.
+
+| Terminal | Content |
 |---|---|
-| T1 | comandi della demo (root del repo) |
-| T2 | `k9s` oppure `watch kubectl -n boutique-dev get pods` |
+| T1 | demo commands (repo root) |
+| T2 | `k9s` or `watch kubectl -n boutique-dev get pods` |
 | T3 | `kubectl -n argocd port-forward svc/argocd-server 8080:80` |
-| T4 | `kubectl -n monitoring port-forward svc/kube-prometheus-stack-grafana 3000:80` (+ Prometheus su 9090 se serve) |
+| T4 | `kubectl -n monitoring port-forward svc/kube-prometheus-stack-grafana 3000:80` (+ Prometheus on 9090 if needed) |
 
 | Browser | URL |
 |---|---|
-| Negozio | http://dev.boutique.local e http://boutique.local |
-| Argo CD | http://localhost:8080 (app `boutique-dev`, `boutique-prod`, `platform-config`) |
+| Shop | http://dev.boutique.local and http://boutique.local |
+| Argo CD | http://localhost:8080 (apps `boutique-dev`, `boutique-prod`, `platform-config`) |
 | Grafana | http://localhost:3000 → dashboard **Online Boutique - Overview** |
 
-**Pre-flight (5 minuti prima)**: `smoke-test.sh dev && smoke-test.sh prod`, tutte le app Argo CD `Synced/Healthy`, nessun alert in Prometheus `/alerts`, immagine `boutique/frontend:1.1.0` **già compilata** (`build-frontend.sh 1.1.0`) se si vuole evitare l'attesa della build dal vivo.
+**Pre-flight (5 minutes before)**:
+- `smoke-test.sh dev && smoke-test.sh prod` pass;
+- every Argo CD app is `Synced/Healthy`;
+- no alerts in Prometheus `/alerts`;
+- the `boutique/frontend:1.1.0` image is **already built** (`build-frontend.sh 1.1.0`), if you want to skip the live build wait.
 
 ---
 
-### 1. Repository e struttura (3 min)
+### 1. Repository and layout (3 min)
 
 ```bash
-git clone https://github.com/<utente>/microservices-demo.git && cd microservices-demo
+git clone https://github.com/<user>/microservices-demo.git && cd microservices-demo
 tree -L 3 platform docs/challenge
-git diff --stat <primo-commit-upstream>..HEAD -- src/    # modifiche al codice: 4 file del frontend
+git diff --stat <first-upstream-commit>..HEAD -- src/    # code changes: 4 frontend files
 ```
 
-Messaggio: *"Non ho riscritto l'app. Ho riusato il Kustomize upstream e aggiunto un livello di piattaforma."* Mostrare `platform/deploy/base/kustomization.yaml`: base upstream, componente NetworkPolicy upstream, patch.
+Message: *"I did not rewrite the app. I reused the upstream Kustomize and added a platform layer on top."* Show `platform/deploy/base/kustomization.yaml`: the upstream base, the upstream NetworkPolicy component, the patches.
 
-### 2. Build dell'immagine applicativa (4 min)
+### 2. Building the application image (4 min)
 
 ```bash
-sed -n '/Challenge/,/^}/p' src/frontend/main.go          # cosa è cambiato nel codice
+sed -n '/Challenge/,/^}/p' src/frontend/main.go          # what changed in the code
 platform/scripts/build-frontend.sh 1.1.0                  # docker build + kind load
 docker run --rm -p 18080:8080 -p 19090:9090 -e PORT=8080 \
   -e PRODUCT_CATALOG_SERVICE_ADDR=x:1 -e CURRENCY_SERVICE_ADDR=x:1 -e CART_SERVICE_ADDR=x:1 \
@@ -41,38 +47,38 @@ docker run --rm -p 18080:8080 -p 19090:9090 -e PORT=8080 \
 sleep 2; curl -s localhost:18080/_healthz; curl -s localhost:19090/metrics | grep build_info; kill %1
 ```
 
-Messaggio: l'immagine gira anche da sola. Le variabili `*_ADDR` sono obbligatorie (il processo va in panic se mancano, un errore di configurazione comune). Mostrare la CI in GitHub Actions: stesso Dockerfile, Trivy, push su GHCR.
+Message: the image also runs on its own. The `*_ADDR` variables are mandatory: the process panics if one is missing, a common configuration error. Then show CI in GitHub Actions: the same Dockerfile, Trivy, push to GHCR.
 
-### 3. Installazione su Kubernetes (3 min, già fatta)
+### 3. Installing on Kubernetes (3 min, already done)
 
 ```bash
-sed -n '1,20p' platform/scripts/bootstrap.sh              # cosa fa, idempotente
+sed -n '1,20p' platform/scripts/bootstrap.sh              # what it does, idempotent
 kubectl get ns
 kubectl -n argocd get applications
 ```
 
-UI di Argo CD: albero delle risorse di `boutique-prod`. Messaggio: *"Dopo il bootstrap, l'unico modo di cambiare il cluster è Git."*
+Argo CD UI: the resource tree of `boutique-prod`. Message: *"After bootstrap, the only way to change the cluster is Git."*
 
-### 4. Pod, service, gateway, configurazioni (4 min)
+### 4. Pods, services, gateway, configuration (4 min)
 
 ```bash
 kubectl -n boutique-prod get deploy,pods,svc,hpa,pdb
 kubectl -n gateway-infra get gateway; kubectl -n boutique-prod get httproute
 kubectl -n boutique-prod get networkpolicy
-kubectl -n boutique-prod describe deploy cartservice | grep -A3 REDIS_ADDR    # da Secret, valore non visibile
+kubectl -n boutique-prod describe deploy cartservice | grep -A3 REDIS_ADDR    # from a Secret, value not shown
 kubectl get ns boutique-prod --show-labels                                     # PSA restricted
 platform/scripts/rbac-check.sh
 ```
 
-### 5. Endpoint applicativi principali (3 min)
+### 5. Main application endpoints (3 min)
 
-Nel browser: home → prodotto → carrello → checkout. Poi l'equivalente automatico:
+In the browser: home → product → cart → checkout. Then the automated equivalent:
 
 ```bash
 platform/scripts/smoke-test.sh prod
 ```
 
-### 6. Health check, readiness, log, metriche (5 min)
+### 6. Health checks, readiness, logs, metrics (5 min)
 
 ```bash
 kubectl -n boutique-prod get deploy frontend -o jsonpath='{.spec.template.spec.containers[0].readinessProbe}' | jq
@@ -81,57 +87,59 @@ kubectl -n boutique-prod port-forward svc/frontend-metrics 19090:9090 & curl -s 
 kubectl top pods -n boutique-prod
 ```
 
-Grafana: dashboard, ambiente `boutique-prod`: richieste per route, latenza p95, ordini al minuto, versione in esecuzione. Prometheus `/alerts`: le 8 regole, tutte inattive.
+Grafana, dashboard with environment `boutique-prod`: requests by route, p95 latency, orders per minute, running version. Prometheus `/alerts`: the 8 rules, all inactive.
 
-### 7. Aggiornamento e rollout (5 min)
+### 7. Update and rollout (5 min)
 
 ```bash
 platform/scripts/release.sh dev 1.1.0           # commit + push + sync + rollout
-# T2: un pod nuovo pronto prima che il vecchio venga tolto (maxUnavailable 0)
+# T2: a new pod is ready before the old one is removed (maxUnavailable 0)
 curl -sI http://dev.boutique.local/ | grep -i x-app-version     # 1.1.0
-SKIP_BUILD=1 platform/scripts/release.sh prod 1.1.0             # promozione della stessa immagine
+SKIP_BUILD=1 platform/scripts/release.sh prod 1.1.0             # promote the same image
 ```
 
-Grafana: il pannello "Frontend version(s) running" mostra per qualche secondo 1.0.0 e 1.1.0 insieme, poi solo 1.1.0. Argo CD: History della app con lo SHA del commit.
+Grafana: the "Frontend version(s) running" panel shows 1.0.0 and 1.1.0 side by side for a few seconds, then only 1.1.0. Argo CD: the app History with the commit SHA.
 
-### 8. Failure scenario e troubleshooting (8 min)
+### 8. Failure scenario and troubleshooting (8 min)
 
-Lo scenario più istruttivo: `netpol-typo`. Tutti i pod restano verdi, ma gli ordini falliscono.
+The most instructive scenario is `netpol-typo`: every pod stays green, but orders fail.
 
 ```bash
 platform/scripts/chaos.sh netpol-typo dev
-# nel browser: un ordine su dev.boutique.local fallisce (o: smoke-test.sh dev -> checkout FAIL)
+# in the browser: an order on dev.boutique.local fails (or: smoke-test.sh dev -> checkout FAIL)
 ```
 
-Diagnosi dal vivo, seguendo il [runbook §2.2](runbook.md#rb-checkout):
+Live diagnosis, following [runbook §2.2](runbook.md#rb-checkout):
 
-1. `kubectl -n boutique-dev get pods` → tutto Running e Ready: *"non è un problema di pod"*
-2. Grafana o metrica: 5xx solo su `/cart/checkout` → *"il problema è in un backend del checkout"*
-3. `kubectl -n boutique-dev logs deploy/checkoutservice --since=5m` → errore verso payment
-4. `kubectl -n argocd get app boutique-dev` → **OutOfSync**: qualcuno ha cambiato il cluster
-5. `kubectl -n boutique-dev get networkpolicy paymentservice -o jsonpath='{.spec.ingress}'` → `checkout-service` invece di `checkoutservice`
-6. **Uso dell'AI (punto 11)**: incollare sintomo e output in Claude Code con il prompt di [ai-usage §4](ai-usage.md#4-caso-di-troubleshooting-con-lai) e confrontare le ipotesi proposte con quelle fatte a mano.
+1. `kubectl -n boutique-dev get pods` → everything Running and Ready: *"it is not a pod problem"*.
+2. Grafana or the metric: 5xx only on `/cart/checkout` → *"the problem is in a checkout backend"*.
+3. `kubectl -n boutique-dev logs deploy/checkoutservice --since=5m` → error towards payment.
+4. `kubectl -n argocd get app boutique-dev` → **OutOfSync**: someone changed the cluster.
+5. `kubectl -n boutique-dev get networkpolicy paymentservice -o jsonpath='{.spec.ingress}'` → `checkout-service` instead of `checkoutservice`.
+6. **Use of AI (point 11)**: paste the symptom and outputs into Claude Code with the prompt from [ai-usage §4](ai-usage.md#4-troubleshooting-case-with-ai). Compare the hypotheses it proposes with the ones made by hand.
 
 ```bash
-platform/scripts/chaos.sh restore dev          # sync da Git
+platform/scripts/chaos.sh restore dev          # sync from Git
 platform/scripts/smoke-test.sh dev
 ```
 
-Bonus self-heal: `chaos.sh bad-image prod` → Argo CD riporta l'immagine giusta da solo entro un minuto (`kubectl -n argocd get app boutique-prod -w`).
+Self-heal bonus: run `chaos.sh bad-image prod`. Argo CD puts the right image back on its own within a minute (`kubectl -n argocd get app boutique-prod -w`).
 
 ### 9. Rollback (4 min)
 
 ```bash
-platform/scripts/rollback.sh prod              # git revert del rilascio 1.1.0 -> sync -> rollout
+platform/scripts/rollback.sh prod              # git revert of the 1.1.0 release -> sync -> rollout
 curl -sI http://boutique.local/ | grep -i x-app-version     # 1.0.0
 git log --oneline -3
 ```
 
-Spiegare la differenza con `rollback.sh prod --emergency` e perché in prod `kubectl rollout undo` da solo viene annullato dal self-heal ([runbook §3](runbook.md#3-rollback)).
+Explain:
+- the difference from `rollback.sh prod --emergency`;
+- why, in prod, `kubectl rollout undo` on its own gets undone by self-heal ([runbook §3](runbook.md#3-rollback)).
 
 ### 10. Krateo (5 min)
 
-Slide o documento: [krateo.md](krateo.md) §3 (parametri), §4 (diagramma), §7 (raccomandazione). Se la PoC è installata:
+Slides or the document [krateo.md](krateo.md): §3 (parameters), §4 (diagram), §7 (recommendation). If the PoC is installed:
 
 ```bash
 cat platform/krateo/krateo/composition-example.yaml
@@ -139,12 +147,12 @@ platform/scripts/krateo-poc.sh status
 kubectl get boutiqueservices -A
 ```
 
-Messaggio: *"Il golden path c'è già, sono i miei overlay. Krateo li trasforma in un'API self-service. Non lo adotterei subito: lo porterei in un pilota quando ci saranno più team."*
+Message: *"The golden path already exists: it is my overlays. Krateo turns them into a self-service API. I would not adopt it right away; I would run a pilot once there are more teams."*
 
-### 11. Esempio concreto di uso dell'AI (3 min)
+### 11. A concrete example of AI use (3 min)
 
-Oltre al passo 8.6, mostrare [ai-usage.md §3](ai-usage.md#3-errori-dellai-intercettati-dalle-verifiche). Il caso migliore da raccontare è la **patch JSON con indice sbagliato**: `kustomize build` passava, ma la patch modificava `RATE` invece di `USERS`. È emerso solo leggendo l'output renderizzato.
+Besides step 8.6, show [ai-usage.md §3](ai-usage.md#3-ai-mistakes-caught-by-verification). The best story to tell is the **JSON patch with the wrong index**: `kustomize build` passed, but the patch changed `RATE` instead of `USERS`. It only surfaced by reading the rendered output.
 
 ---
 
-**Dopo la demo**: `platform/scripts/release.sh dev 1.0.0` per riportare dev allo stato iniziale, se serve ripetere.
+**After the demo**: run `platform/scripts/release.sh dev 1.0.0` to bring dev back to its initial state, if you need to repeat the demo.
