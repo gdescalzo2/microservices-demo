@@ -6,3 +6,15 @@ apiVersion: kind.x-k8s.io/v1alpha4
 name: boutique
 nodes:
   - role: control-plane
+    # CPU budget (docs/challenge/architecture.md, "Capacity"): the node cgroup
+    # is capped at vCPUs - 0.5 by bootstrap.sh; these reservations make the
+    # scheduler's allocatable match it: 4000m - 500m - 800m = 2700m for pods.
+    # systemReserved = the 0.5 vCPU left outside the cap for the VM;
+    # kubeReserved = kubelet + containerd and its shims, measured ~740-865m.
+    kubeadmConfigPatches:
+      - |
+        kind: KubeletConfiguration
+        systemReserved:
+          cpu: 500m
+        kubeReserved:
+          cpu: 800m
