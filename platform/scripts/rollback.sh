@@ -11,7 +11,7 @@
 # Usage: platform/scripts/rollback.sh <dev|prod> [--emergency]
 # shellcheck source=lib.sh
 source "$(dirname "$0")/lib.sh"
-need git kubectl
+need git kubectl kustomize curl jq
 
 ENV="${1:?usage: $0 <dev|prod> [--emergency]}"; MODE="${2:-gitops}"
 NS="$(ns_for "$ENV")"; APP="boutique-$ENV"; OVERLAY="platform/deploy/overlays/$ENV"
@@ -42,11 +42,15 @@ BAD="$(git -C "$REPO_ROOT" log -1 --format=%h -- "$OVERLAY")"
 git -C "$REPO_ROOT" --no-pager log -1 --format='    reverting %h  %s  (%an, %ar)' "$BAD"
 git -C "$REPO_ROOT" revert --no-edit "$BAD"
 git -C "$REPO_ROOT" push
-ok "pushed revert $(git -C "$REPO_ROOT" rev-parse --short HEAD)"
+SHA="$(git -C "$REPO_ROOT" rev-parse HEAD)"
+ok "pushed revert ${SHA:0:8}"
+# The version the overlay declares after the revert is what must be running.
+EXPECTED="$(kustomize build "$REPO_ROOT/$OVERLAY" | awk '/image: boutique\/frontend:/{sub(/.*:/,"",$2); print $2; exit}')"
+[[ -n "$EXPECTED" ]] || die "cannot read the frontend tag from $OVERLAY after the revert"
+echo "    expected frontend version after rollback: $EXPECTED"
 
 step "Argo CD sync + rollout"
-argocd_sync "$APP"
-sleep 5
-k -n "$NS" rollout status deploy/frontend --timeout=300s
-wait_app_healthy "$APP" 300
+argocd_sync "$APP" "$SHA"
+wait_app_at_revision "$APP" "$SHA" 300 || die "Argo CD did not reach ${SHA:0:8}"
+verify_frontend "$ENV" "$EXPECTED" || die "rollback not verified"
 k -n "$NS" get pods -l app=frontend -o custom-columns='POD:.metadata.name,IMAGE:.spec.containers[0].image'

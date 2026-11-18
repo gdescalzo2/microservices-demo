@@ -82,10 +82,59 @@ repo_url() {
 
 # Ask Argo CD to sync an Application now (same as "Sync" in the UI), without
 # needing the argocd CLI or a login.
-argocd_sync() {
-  local app="$1"
+argocd_sync() { # argocd_sync <app> [revision]  (default HEAD of the tracked branch)
+  local app="$1" rev="${2:-HEAD}"
   k -n argocd patch application "$app" --type merge \
-    -p '{"operation":{"initiatedBy":{"username":"platform-script"},"sync":{"revision":"HEAD","prune":true}}}' >/dev/null
+    -p "{\"operation\":{\"initiatedBy\":{\"username\":\"platform-script\"},\"sync\":{\"revision\":\"${rev}\",\"prune\":true}}}" >/dev/null
+}
+
+# Waits until Argo CD reports the app Synced *at this exact commit* and
+# Healthy. wait_app_healthy alone can succeed on the previous revision right
+# after a push (Synced/Healthy before Argo CD has seen the new commit).
+wait_app_at_revision() { # wait_app_at_revision <app> <full-sha> [timeout]
+  local app="$1" sha="$2" timeout="${3:-300}" waited=0 rev sync health
+  while true; do
+    rev="$(k -n argocd get application "$app" -o jsonpath='{.status.sync.revision}' 2>/dev/null || true)"
+    sync="$(k -n argocd get application "$app" -o jsonpath='{.status.sync.status}' 2>/dev/null || true)"
+    health="$(k -n argocd get application "$app" -o jsonpath='{.status.health.status}' 2>/dev/null || true)"
+    if [[ "$rev" == "$sha" && "$sync" == "Synced" && "$health" == "Healthy" ]]; then
+      ok "$app: Synced / Healthy at ${sha:0:8}"
+      return 0
+    fi
+    if (( waited >= timeout )); then
+      warn "$app: ${sync:-?} / ${health:-?} at ${rev:0:8}, expected ${sha:0:8}, after ${timeout}s"
+      return 1
+    fi
+    sleep 5; waited=$((waited + 5))
+    echo "    ... $app: ${sync:-?} / ${health:-?} at ${rev:0:8} (${waited}s)"
+  done
+}
+
+# Fails unless the frontend of <env> runs <version> end to end: Deployment
+# image tag, every frontend pod after the rollout, and the X-App-Version
+# header served through the Gateway.
+verify_frontend() { # verify_frontend <env> <version>
+  local env="$1" version="$2" ns host ip spec_image pods_ok pods_total pods_bad header
+  ns="$(ns_for "$env")"; host="$(host_for "$env")"; ip="$(gateway_ip)"
+  spec_image="$(k -n "$ns" get deploy frontend -o jsonpath='{.spec.template.spec.containers[0].image}')"
+  [[ "$spec_image" == "boutique/frontend:${version}" ]] \
+    || { warn "Deployment frontend image is '$spec_image', expected boutique/frontend:${version}"; return 1; }
+  k -n "$ns" rollout status deploy/frontend --timeout=300s || return 1
+  # Running pods that are not being deleted (terminating pods of the old
+  # ReplicaSet still report phase Running). At least one must exist.
+  pods_ok="$(k -n "$ns" get pods -l app=frontend -o json | jq --arg img "boutique/frontend:${version}" \
+    '[.items[] | select(.status.phase=="Running" and .metadata.deletionTimestamp==null)]
+     | {total: length, wrong: map(select(.spec.containers[0].image != $img)) | length}
+     | "\(.total) \(.wrong)"' -r)"
+  read -r pods_total pods_bad <<<"$pods_ok"
+  (( pods_total > 0 && pods_bad == 0 )) \
+    || { warn "frontend pods: ${pods_total} running, ${pods_bad} not on ${version}"; return 1; }
+  # "|| true": with set -e a curl failure (e.g. Gateway unreachable) would
+  # abort the caller silently instead of reaching the warn below.
+  header="$(curl -sS --max-time 10 -I --resolve "${host}:80:${ip}" "http://${host}/" 2>/dev/null \
+    | awk -F': ' 'tolower($1)=="x-app-version"{print $2}' | tr -d '\r' || true)"
+  [[ "$header" == "$version" ]] || { warn "X-App-Version is '${header:-none}', expected ${version}"; return 1; }
+  ok "$env frontend on ${version}: Deployment, all running pods, X-App-Version"
 }
 
 wait_app_healthy() {
