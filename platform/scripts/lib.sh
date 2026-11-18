@@ -121,6 +121,34 @@ repo_url() {
   echo "$url"
 }
 
+# Owner (user or org) of the fork, from repo_url: https://github.com/<owner>/<repo>.git
+# Used to match files whether or not set-github-user.sh has replaced the
+# YOUR_GITHUB_USER placeholder in them.
+github_owner() {
+  local url owner
+  url="$(repo_url)"
+  [[ "$url" == https://github.com/* ]] || die "not a github.com repo URL: $url"
+  url="${url#https://github.com/}"
+  owner="${url%%/*}"
+  [[ "$owner" =~ ^[A-Za-z0-9-]+$ ]] || die "cannot read the GitHub owner from $(repo_url)"
+  echo "$owner"
+}
+
+# Prints <file> with the fork URL replaced by <url>, whether the file holds the
+# YOUR_GITHUB_USER placeholder or the owner's name, and fails unless every
+# github.com/<owner>/microservices-demo.git URL in the result is exactly <url>.
+# A plain sed exits 0 even when it matched nothing (seen for real: a pattern
+# kept looking for the placeholder after set-github-user.sh had removed it).
+render_repo_url() { # render_repo_url <file> <url>
+  local file="$1" url="$2" owner out found
+  owner="$(github_owner)"
+  out="$(sed -E "s#https://github\.com/(YOUR_GITHUB_USER|${owner})/microservices-demo\.git#${url}#g" "$file")"
+  found="$(grep -oE 'https://github\.com/[A-Za-z0-9_-]+/microservices-demo\.git' <<<"$out" | sort -u || true)"
+  [[ "$found" == "$url" ]] \
+    || die "${file#"$REPO_ROOT"/}: repo URLs after substitution are '${found//$'\n'/ }', expected only $url"
+  printf '%s\n' "$out"
+}
+
 # Ask Argo CD to sync an Application now (same as "Sync" in the UI), without
 # needing the argocd CLI or a login.
 # An explicit sync operation does not inherit spec.syncPolicy.retry: it gets

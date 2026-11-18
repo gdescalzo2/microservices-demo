@@ -155,8 +155,8 @@ step "Secrets (generated here, never committed)"
 
 step "Argo CD projects and applications"
 for f in projects.yaml applications.yaml; do
-  sed "s#https://github.com/YOUR_GITHUB_USER/microservices-demo.git#${REPO}#g" \
-    "$REPO_ROOT/platform/gitops/$f" | k apply -f - >/dev/null
+  manifest="$(render_repo_url "$REPO_ROOT/platform/gitops/$f" "$REPO")"
+  k apply -f - <<<"$manifest" >/dev/null
 done
 ok "applied (tracking ${REPO}, branch main)"
 

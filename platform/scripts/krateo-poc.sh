@@ -6,7 +6,8 @@
 #   --BoutiqueService instance--> Helm release = Argo CD Application
 #   --> Argo CD deploys the platform overlay into boutique-<name>-<env>.
 #
-# Usage: platform/scripts/krateo-poc.sh package   # build the chart .tgz (commit + push it)
+# Usage: platform/scripts/krateo-poc.sh render    # print what install applies (no changes)
+#        platform/scripts/krateo-poc.sh package   # build the chart .tgz (commit + push it)
 #        platform/scripts/krateo-poc.sh install   # core-provider + definition + one instance
 #        platform/scripts/krateo-poc.sh status
 #        platform/scripts/krateo-poc.sh cleanup   # remove the instance (and its workload)
@@ -30,7 +31,32 @@ raw_chart_url() {
   echo "${r}/main/platform/krateo/dist/${TGZ}"
 }
 
+# CompositionDefinition as "install" applies it: chart URL = the .tgz on this
+# fork's main branch (direct .tgz URLs are a documented chart source in the
+# Krateo docs, "TGZ Archive (direct URL)"). The file may hold the placeholder
+# or the owner's name; the result must have exactly the expected url and the
+# version of Chart.yaml, or this fails (a silent no-op substitution here once
+# left the unpublished oci://ghcr.io URL in place).
+render_definition() {
+  local owner out
+  owner="$(github_owner)"
+  out="$(sed -E "s#oci://ghcr\.io/(YOUR_GITHUB_USER|${owner})/charts/boutique-service#$(raw_chart_url)#" \
+    "$REPO_ROOT/platform/krateo/krateo/compositiondefinition.yaml")"
+  grep -Fx "    url: $(raw_chart_url)" <<<"$out" >/dev/null \
+    || die "CompositionDefinition chart url is not $(raw_chart_url)"
+  grep -Ex "    version: \"?${CHART_VERSION//./\\.}\"?" <<<"$out" >/dev/null \
+    || die "CompositionDefinition chart version is not ${CHART_VERSION} (Chart.yaml)"
+  printf '%s\n' "$out"
+}
+
 case "${1:-}" in
+  render)
+    # What "install" would apply, without applying it.
+    render_repo_url "$REPO_ROOT/platform/krateo/appproject-selfservice.yaml" "$(repo_url)"
+    echo "---"
+    render_definition
+    ;;
+
   package)
     step "helm lint + package"
     helm lint "$CHART_DIR"
@@ -44,6 +70,9 @@ case "${1:-}" in
   install)
     REPO="$(repo_url)"
     curl -fsI "$(raw_chart_url)" >/dev/null || die "chart not reachable at $(raw_chart_url): run '$0 package', commit and push first"
+    # Rendered (and checked) before anything is installed.
+    APPPROJECT="$(render_repo_url "$REPO_ROOT/platform/krateo/appproject-selfservice.yaml" "$REPO")"
+    DEFINITION="$(render_definition)"
 
     step "Krateo core-provider (includes chart-inspector)"
     helm repo add krateo https://charts.krateo.io >/dev/null 2>&1 || true
@@ -53,12 +82,10 @@ case "${1:-}" in
     ok "core-provider running"
 
     step "Argo CD guardrail for self-service instances (AppProject boutique-selfservice)"
-    sed "s#https://github.com/YOUR_GITHUB_USER/microservices-demo.git#${REPO}#g" \
-      "$REPO_ROOT/platform/krateo/appproject-selfservice.yaml" | k apply -f -
+    k apply -f - <<<"$APPPROJECT"
 
     step "CompositionDefinition boutique-service -> generated CRD + controller"
-    sed "s#oci://ghcr.io/YOUR_GITHUB_USER/charts/boutique-service#$(raw_chart_url)#" \
-      "$REPO_ROOT/platform/krateo/krateo/compositiondefinition.yaml" | k apply -f -
+    k apply -f - <<<"$DEFINITION"
     k -n krateo-system wait compositiondefinition boutique-service --for condition=Ready=True --timeout=600s
     k get crd | grep composition.krateo.io || true
 
@@ -106,5 +133,5 @@ YAML
     ok "done (core-provider left installed; helm -n krateo-system uninstall krateo-core-provider to remove it)"
     ;;
 
-  *) die "usage: $0 package|install|status|cleanup" ;;
+  *) die "usage: $0 render|package|install|status|cleanup" ;;
 esac
