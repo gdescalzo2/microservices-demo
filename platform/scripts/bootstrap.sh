@@ -62,7 +62,8 @@ else
 fi
 
 step "cloud-provider-kind (LoadBalancer IPs + Gateway API controller)"
-if docker ps --format '{{.Names}}' | grep -qx cloud-provider-kind; then
+# grep >/dev/null, not grep -q, after a pipe with pipefail (ai-usage §3.6).
+if docker ps --format '{{.Names}}' | grep -x cloud-provider-kind >/dev/null; then
   ok "already running"
 else
   CPK_VERSION="${CPK_VERSION:-$(basename "$(curl -fsSL -o /dev/null -w '%{url_effective}' https://github.com/kubernetes-sigs/cloud-provider-kind/releases/latest)")}"
@@ -79,6 +80,39 @@ for _ in $(seq 1 60); do
 done
 k wait --for condition=Established crd/gateways.gateway.networking.k8s.io crd/httproutes.gateway.networking.k8s.io --timeout=60s >/dev/null
 ok "Gateway API CRDs ready"
+
+# After a host reboot cloud-provider-kind listens for xDS on a new random
+# port, but Docker restarts the existing Envoy gateway containers with the old
+# port baked into their command: Envoy gets no listeners and the Gateway is
+# unreachable (seen for real). Remove stale containers: cloud-provider-kind
+# recreates them with the current port on its next Gateway sync (~1 min).
+xds_port=""
+for _ in $(seq 1 12); do xds_port="$(cpk_xds_port)"; [[ -n "$xds_port" ]] && break; sleep 5; done
+if [[ -z "$xds_port" ]]; then
+  warn "cannot read the cloud-provider-kind xDS port: gateway containers not checked"
+else
+  stale=0
+  for gw in $(docker ps -a --format '{{.Names}}' | grep '^kindccm-gw-' || true); do
+    gw_port="$(gw_xds_port "$gw")"
+    if [[ "$gw_port" != "$xds_port" ]]; then
+      warn "$gw points to xDS port ${gw_port:-?}, cloud-provider-kind listens on $xds_port: removing it"
+      docker rm -f "$gw" >/dev/null; stale=$((stale + 1))
+    fi
+  done
+  if (( stale > 0 )); then
+    echo "    waiting for cloud-provider-kind to recreate the gateway container(s)..."
+    for _ in $(seq 1 36); do   # up to 3 min
+      gw="$(docker ps --format '{{.Names}}' | grep '^kindccm-gw-' | head -1 || true)"
+      [[ -n "$gw" && "$(gw_xds_port "$gw")" == "$xds_port" ]] && break
+      sleep 5
+    done
+    [[ -n "$gw" && "$(gw_xds_port "$gw")" == "$xds_port" ]] \
+      || die "gateway container not recreated with xDS port $xds_port: check 'docker logs cloud-provider-kind'"
+    ok "gateway container $gw recreated (xDS port $xds_port)"
+  else
+    ok "gateway container(s) use the current xDS port $xds_port"
+  fi
+fi
 
 step "Helm add-ons"
 helm repo add metrics-server https://kubernetes-sigs.github.io/metrics-server/ >/dev/null 2>&1 || true

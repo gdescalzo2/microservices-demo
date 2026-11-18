@@ -254,6 +254,14 @@ curl -sv --resolve dev.boutique.local:80:$(k -n gateway-infra get gateway boutiq
 k -n $NS get httproute frontend -o jsonpath='{.status}' | jq   # Accepted / ResolvedRefs
 ```
 
+**After a reboot of the VM** the Gateway can stay unreachable on both hosts (connection refused on port 80) while every pod is healthy. Envoy runs in a Docker container created by cloud-provider-kind, with the xDS port of cloud-provider-kind written into its command. cloud-provider-kind picks a new random port at every start, Docker restarts the old Envoy container with the old port, and Envoy never receives its listeners.
+
+```bash
+docker logs --tail 3 $(docker ps --format '{{.Names}}' | grep '^kindccm-gw-')   # "xds_cluster ... upstream connect error"
+platform/scripts/bootstrap.sh     # idempotent: detects the stale container, removes it, cloud-provider-kind recreates it (~1 min)
+getent hosts dev.boutique.local   # the container may get a new IP: bootstrap prints the /etc/hosts line to use
+```
+
 A `404` from the Gateway (not from the frontend) means no HTTPRoute matches the host. Typical causes: wrong hostname, or a namespace without the `platform.example.com/gateway-access=true` label.
 
 <a id="rb-host-cpu"></a>

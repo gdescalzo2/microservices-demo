@@ -42,6 +42,24 @@ host_for() {
   esac
 }
 
+# xDS port cloud-provider-kind listens on in its *current* run (it picks a
+# random port at every start). Logs are read only since the container's last
+# start: older runs' lines are still in "docker logs". Empty if not logged yet.
+cpk_xds_port() {
+  local since
+  since="$(docker inspect -f '{{.State.StartedAt}}' cloud-provider-kind 2>/dev/null)" || return 0
+  docker logs --since "$since" cloud-provider-kind 2>&1 \
+    | sed -n 's/.*"XDS management server listening".* port=\([0-9][0-9]*\).*/\1/p' | tail -1
+}
+
+# xDS port baked into an Envoy gateway container created by
+# cloud-provider-kind: the first port_value after "xds_cluster" in the config
+# its command writes (the admin port comes later in the same config).
+gw_xds_port() { # gw_xds_port <container>
+  docker inspect -f '{{index .Config.Cmd 2}}' "$1" 2>/dev/null \
+    | sed 's/\\n/\n/g' | awk '/xds_cluster/{f=1} f && /port_value:/{print $2; exit}'
+}
+
 gateway_ip() {
   k -n gateway-infra get gateway boutique-gateway \
     -o jsonpath='{.status.addresses[0].value}' 2>/dev/null || true
