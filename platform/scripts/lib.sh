@@ -82,10 +82,12 @@ repo_url() {
 
 # Ask Argo CD to sync an Application now (same as "Sync" in the UI), without
 # needing the argocd CLI or a login.
+# An explicit sync operation does not inherit spec.syncPolicy.retry: it gets
+# the same retry policy here (see platform/gitops/applications.yaml).
 argocd_sync() { # argocd_sync <app> [revision]  (default HEAD of the tracked branch)
   local app="$1" rev="${2:-HEAD}"
   k -n argocd patch application "$app" --type merge \
-    -p "{\"operation\":{\"initiatedBy\":{\"username\":\"platform-script\"},\"sync\":{\"revision\":\"${rev}\",\"prune\":true}}}" >/dev/null
+    -p "{\"operation\":{\"initiatedBy\":{\"username\":\"platform-script\"},\"sync\":{\"revision\":\"${rev}\",\"prune\":true},\"retry\":{\"limit\":5,\"backoff\":{\"duration\":\"5s\",\"factor\":2,\"maxDuration\":\"3m\"}}}}" >/dev/null
 }
 
 # Waits until Argo CD reports the app Synced *at this exact commit* and

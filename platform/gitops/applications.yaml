@@ -22,6 +22,20 @@ spec:
     automated:
       prune: true
       selfHeal: true
+    # Retry failed syncs: a sync fails outright if the Argo CD repo-server is
+    # briefly unavailable (seen for real during a release: repo-server killed
+    # by its liveness probe while the image was built on the host, most likely
+    # CPU starvation, not measured). Backoff 5s,10s,20s,40s,80s (155s in all)
+    # plus the attempts themselves: measured on this VM, a failed attempt
+    # ~24s and a full sync of dev ~2m40s with a cold repo-server, so the worst
+    # case is ~7 min; release.sh/rollback.sh wait 600s. Same revision on
+    # retry (refresh: false): the release is that exact commit.
+    retry:
+      limit: 5
+      backoff:
+        duration: 5s
+        factor: 2
+        maxDuration: 3m
 ---
 apiVersion: argoproj.io/v1alpha1
 kind: Application
@@ -45,6 +59,20 @@ spec:
       # DEV: no self-heal on purpose. Manual changes (troubleshooting, chaos
       # scenarios) stay in place and show up as "OutOfSync" until resynced.
       selfHeal: false
+    # Retry failed syncs: a sync fails outright if the Argo CD repo-server is
+    # briefly unavailable (seen for real during a release: repo-server killed
+    # by its liveness probe while the image was built on the host, most likely
+    # CPU starvation, not measured). Backoff 5s,10s,20s,40s,80s (155s in all)
+    # plus the attempts themselves: measured on this VM, a failed attempt
+    # ~24s and a full sync of dev ~2m40s with a cold repo-server, so the worst
+    # case is ~7 min; release.sh/rollback.sh wait 600s. Same revision on
+    # retry (refresh: false): the release is that exact commit.
+    retry:
+      limit: 5
+      backoff:
+        duration: 5s
+        factor: 2
+        maxDuration: 3m
     syncOptions:
       - PruneLast=true
   revisionHistoryLimit: 10
@@ -70,6 +98,20 @@ spec:
       prune: true
       # PROD: any manual drift (kubectl edit/scale/set image) is reverted.
       selfHeal: true
+    # Retry failed syncs: a sync fails outright if the Argo CD repo-server is
+    # briefly unavailable (seen for real during a release: repo-server killed
+    # by its liveness probe while the image was built on the host, most likely
+    # CPU starvation, not measured). Backoff 5s,10s,20s,40s,80s (155s in all)
+    # plus the attempts themselves: measured on this VM, a failed attempt
+    # ~24s and a full sync of dev ~2m40s with a cold repo-server, so the worst
+    # case is ~7 min; release.sh/rollback.sh wait 600s. Same revision on
+    # retry (refresh: false): the release is that exact commit.
+    retry:
+      limit: 5
+      backoff:
+        duration: 5s
+        factor: 2
+        maxDuration: 3m
     syncOptions:
       - PruneLast=true
   revisionHistoryLimit: 10

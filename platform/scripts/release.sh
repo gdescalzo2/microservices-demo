@@ -45,6 +45,7 @@ ok "pushed ${SHA:0:8}"
 
 step "Argo CD sync + rollout"
 argocd_sync "boutique-$ENV" "$SHA"   # this exact commit, without waiting for polling
-wait_app_at_revision "boutique-$ENV" "$SHA" 300 || die "Argo CD did not reach ${SHA:0:8}"
+# 600s covers the sync retry backoff (see platform/gitops/applications.yaml).
+wait_app_at_revision "boutique-$ENV" "$SHA" 600 || die "Argo CD did not reach ${SHA:0:8}"
 verify_frontend "$ENV" "$VERSION" || die "release not verified"
 k -n "$NS" get pods -l app=frontend -o custom-columns='POD:.metadata.name,IMAGE:.spec.containers[0].image,READY:.status.containerStatuses[0].ready'

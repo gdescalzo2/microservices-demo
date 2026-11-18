@@ -51,6 +51,7 @@ echo "    expected frontend version after rollback: $EXPECTED"
 
 step "Argo CD sync + rollout"
 argocd_sync "$APP" "$SHA"
-wait_app_at_revision "$APP" "$SHA" 300 || die "Argo CD did not reach ${SHA:0:8}"
+# 600s covers the sync retry backoff (see platform/gitops/applications.yaml).
+wait_app_at_revision "$APP" "$SHA" 600 || die "Argo CD did not reach ${SHA:0:8}"
 verify_frontend "$ENV" "$EXPECTED" || die "rollback not verified"
 k -n "$NS" get pods -l app=frontend -o custom-columns='POD:.metadata.name,IMAGE:.spec.containers[0].image'
