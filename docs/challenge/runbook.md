@@ -278,10 +278,10 @@ journalctl -b -1 -p warning | grep -iE 'oom|hung|lockup'   # after a forced rebo
 k top pod -A --sort-by=cpu | head
 ```
 
-The kind node is a Docker container; without a cap, pods can take every vCPU and starve the desktop. `bootstrap.sh` caps it at *vCPUs − 1*, with no cap on hosts with 2 vCPUs or fewer (`KIND_NODE_CPUS` overrides with an integer from 0 to the vCPU count; `0` disables). To apply or change it on a running cluster, without restarting anything:
+The kind node is a Docker container; without a cap, pods can take every vCPU and starve the desktop. `bootstrap.sh` caps it at *vCPUs − 0.5* (3.5 on 4 vCPUs), with no cap on hosts with 2 vCPUs or fewer (`KIND_NODE_CPUS` overrides with a value from 0 to the vCPU count, at most one decimal; `0` disables). To apply or change it on a running cluster, without restarting anything:
 
 ```bash
-docker update --cpus 3 boutique-control-plane
+docker update --cpus 3.5 boutique-control-plane
 ```
 
 If the load comes from a restart loop, fix that first (§2.5): a container killed by its liveness probe during a slow start burns CPU on every attempt.

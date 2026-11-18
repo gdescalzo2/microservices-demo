@@ -8,7 +8,7 @@
 # Usage:   platform/scripts/bootstrap.sh
 # Env:     GIT_REPO_URL  repo Argo CD will track (default: git remote "origin")
 #          SKIP_BUILD=1  do not build the frontend image
-#          KIND_NODE_CPUS  CPU cap for the kind node container (integer 0..vCPUs; default vCPUs - 1, no cap with <= 2 vCPUs; 0 = no cap)
+#          KIND_NODE_CPUS  CPU cap for the kind node container (0..vCPUs, at most one decimal; default vCPUs - 0.5, no cap with <= 2 vCPUs; 0 = no cap)
 # Re-running is safe: every step checks what already exists.
 # shellcheck source=lib.sh
 source "$(dirname "$0")/lib.sh"
@@ -41,18 +41,31 @@ fi
 # single-node cluster that would leave the Gateway without backends.
 k label node "${CLUSTER_NAME}-control-plane" node.kubernetes.io/exclude-from-external-load-balancers- >/dev/null 2>&1 || true
 
-# Cap the node container at (vCPUs - 1): without it, pods can take every CPU
-# and freeze the host (seen on the first real bootstrap: desktop unresponsive
-# for minutes). Applied on every run, so it also fixes existing clusters.
-# With 2 vCPUs or fewer the default is no cap: one CPU is too little to run
-# two environments, monitoring, Argo CD and Kyverno.
+# Cap the node container at (vCPUs - 0.5): without a cap, pods can take every
+# CPU and freeze the host (seen on the first real bootstrap: desktop
+# unresponsive for minutes). Applied on every run, so it also fixes existing
+# clusters. 0.5 vCPU stays outside the cap for the VM (desktop, dockerd, the
+# Gateway's Envoy container, kernel): measured ~360m at rest. The kubelet
+# reservations (platform/kind/cluster.yaml) must match: allocatable =
+# vCPUs - systemReserved (the 0.5 left out) - kubeReserved.
+# With 2 vCPUs or fewer the default is no cap: too little to run two
+# environments, monitoring, Argo CD and Kyverno.
 host_cpus="$(nproc)"
-node_cpus="${KIND_NODE_CPUS:-$(( host_cpus > 2 ? host_cpus - 1 : host_cpus ))}"
-# No leading zeros: bash arithmetic would read "08" as octal and fail.
-if ! [[ "$node_cpus" =~ ^(0|[1-9][0-9]*)$ ]] || (( node_cpus > host_cpus )); then
-  die "KIND_NODE_CPUS must be an integer between 0 and ${host_cpus} (got '${node_cpus}')"
+default_cpus="$(( host_cpus > 2 ? host_cpus - 1 : host_cpus )).$(( host_cpus > 2 ? 5 : 0 ))"
+node_cpus="${KIND_NODE_CPUS:-$default_cpus}"
+# An integer or one decimal digit (3, 3.5). No leading zeros. Compared in
+# millicores because bash arithmetic is integer-only (and would read "08" as
+# octal).
+if ! [[ "$node_cpus" =~ ^(0|[1-9][0-9]*)(\.[0-9])?$ ]]; then
+  die "KIND_NODE_CPUS must be a number with at most one decimal, 0 to ${host_cpus} (got '${node_cpus}')"
 fi
-if (( node_cpus == 0 || node_cpus == host_cpus )); then
+cpu_int="${node_cpus%.*}"; cpu_dec=0
+[[ "$node_cpus" == *.* ]] && cpu_dec="${node_cpus#*.}"
+node_mcpu=$(( cpu_int * 1000 + cpu_dec * 100 ))
+if (( node_mcpu > host_cpus * 1000 )); then
+  die "KIND_NODE_CPUS must be a number with at most one decimal, 0 to ${host_cpus} (got '${node_cpus}')"
+fi
+if (( node_mcpu == 0 || node_mcpu == host_cpus * 1000 )); then
   # "docker update --cpus 0" leaves an existing cap unchanged: set it to all CPUs.
   docker update --cpus "$host_cpus" "${CLUSTER_NAME}-control-plane" >/dev/null
   warn "node container not capped: it may use all ${host_cpus} CPUs"
