@@ -15,6 +15,7 @@ resources:
 components:
   - ../../components/kind-sizing
   - ../../components/observability
+  - ../../components/staged-sync
 
 labels:
   - pairs:

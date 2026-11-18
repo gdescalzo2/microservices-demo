@@ -1,0 +1,71 @@
+# Staged start of one environment: Argo CD applies Deployments wave by wave
+# and waits for each wave to be healthy before the next. A change to every
+# pod template (e.g. new CPU requests) then restarts one service at a time
+# instead of all twelve together, which on the 4-vCPU VM saturated the CPU
+# (load ~80, see docs/challenge/ai-usage.md). Order follows the call graph:
+# data store and leaf services first, then their callers, the load
+# generator last. Metadata-only: adding it does not restart any pod.
+apiVersion: kustomize.config.k8s.io/v1alpha1
+kind: Component
+
+patches:
+  - target: {kind: Deployment, name: redis-cart}
+    patch: |-
+      - op: add
+        path: /metadata/annotations/argocd.argoproj.io~1sync-wave
+        value: "0"
+  - target: {kind: Deployment, name: productcatalogservice}
+    patch: |-
+      - op: add
+        path: /metadata/annotations/argocd.argoproj.io~1sync-wave
+        value: "1"
+  - target: {kind: Deployment, name: currencyservice}
+    patch: |-
+      - op: add
+        path: /metadata/annotations/argocd.argoproj.io~1sync-wave
+        value: "2"
+  - target: {kind: Deployment, name: shippingservice}
+    patch: |-
+      - op: add
+        path: /metadata/annotations/argocd.argoproj.io~1sync-wave
+        value: "3"
+  - target: {kind: Deployment, name: paymentservice}
+    patch: |-
+      - op: add
+        path: /metadata/annotations/argocd.argoproj.io~1sync-wave
+        value: "4"
+  - target: {kind: Deployment, name: emailservice}
+    patch: |-
+      - op: add
+        path: /metadata/annotations/argocd.argoproj.io~1sync-wave
+        value: "5"
+  - target: {kind: Deployment, name: cartservice}
+    patch: |-
+      - op: add
+        path: /metadata/annotations/argocd.argoproj.io~1sync-wave
+        value: "6"
+  - target: {kind: Deployment, name: recommendationservice}
+    patch: |-
+      - op: add
+        path: /metadata/annotations/argocd.argoproj.io~1sync-wave
+        value: "7"
+  - target: {kind: Deployment, name: adservice}
+    patch: |-
+      - op: add
+        path: /metadata/annotations/argocd.argoproj.io~1sync-wave
+        value: "8"
+  - target: {kind: Deployment, name: checkoutservice}
+    patch: |-
+      - op: add
+        path: /metadata/annotations/argocd.argoproj.io~1sync-wave
+        value: "9"
+  - target: {kind: Deployment, name: frontend}
+    patch: |-
+      - op: add
+        path: /metadata/annotations/argocd.argoproj.io~1sync-wave
+        value: "10"
+  - target: {kind: Deployment, name: loadgenerator}
+    patch: |-
+      - op: add
+        path: /metadata/annotations/argocd.argoproj.io~1sync-wave
+        value: "11"
