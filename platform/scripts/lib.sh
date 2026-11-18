@@ -42,6 +42,47 @@ host_for() {
   esac
 }
 
+# Sets the newTag of one image entry in a kustomization.yaml, changing only
+# that value: indentation, comments and every other line stay as they are.
+# Not "kustomize edit set image": it rewrites the whole file in its own format
+# (indentation, comment placement, dropped default fields; seen for real).
+# Fails, leaving the file untouched, unless exactly one entry named <image>
+# exists and exactly one newTag line in it was changed. The newTag must come
+# after "name:" in the entry (the layout used in this repo).
+set_image_tag() { # set_image_tag <kustomization.yaml> <image name> <tag>
+  local file="$1" image="$2" tag="$3" tmp
+  tmp="$(mktemp)"
+  if ! awk -v image="$image" -v tag="$tag" '
+    {
+      line = $0
+      if (line ~ /^[ ]*(- )?name:[ ]*/) {          # a "name:" key, list item or not
+        v = line
+        sub(/^[ ]*(- )?name:[ ]*/, "", v); sub(/[ ]*(#.*)?$/, "", v); gsub(/"/, "", v)
+        if (v == image) { inblk = 1; found++; print line; next }
+        if (inblk) inblk = 0
+      }
+      if (inblk && line ~ /^[ ]*- /) inblk = 0      # next list item
+      if (inblk && line ~ /^[^ #]/) inblk = 0       # back to a top-level key
+      if (inblk && line ~ /^[ ]*newTag:/) {
+        pre = line;  sub(/newTag:.*/, "", pre)                          # indentation
+        rest = line; sub(/^[ ]*newTag:[ ]*("[^"]*"|[^ #]+)/, "", rest)  # trailing comment
+        q = (line ~ /newTag:[ ]*"/) ? "\"" : ""                         # keep quoting
+        print pre "newTag: " q tag q rest; changed++; inblk = 0; next
+      }
+      print line
+    }
+    END {
+      if (found != 1 || changed != 1) {
+        printf "set_image_tag: %d entries named %s, %d newTag lines changed (expected 1 and 1)\n", found, image, changed > "/dev/stderr"
+        exit 3
+      }
+    }' "$file" > "$tmp"; then
+    rm -f "$tmp"; return 1
+  fi
+  cat "$tmp" > "$file"   # cat, not mv: keeps the original file's permissions
+  rm -f "$tmp"
+}
+
 # xDS port cloud-provider-kind listens on in its *current* run (it picks a
 # random port at every start). Logs are read only since the container's last
 # start: older runs' lines are still in "docker logs". Empty if not logged yet.

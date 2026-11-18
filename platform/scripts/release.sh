@@ -31,10 +31,32 @@ else
 fi
 
 step "Overlay $ENV: boutique/frontend -> $VERSION"
-CURRENT="$(cd "$OVERLAY" && kustomize build . | awk '/image: boutique\/frontend:/{print $2; exit}')"
+KREL="platform/deploy/overlays/$ENV/kustomization.yaml"
+BEFORE="$(mktemp)"; AFTER="$(mktemp)"; trap 'rm -f "$BEFORE" "$AFTER"' EXIT
+kustomize build "$OVERLAY" > "$BEFORE"
+CURRENT="$(awk '/image: boutique\/frontend:/{print $2; exit}' "$BEFORE")"
 echo "    current: $CURRENT"
-(cd "$OVERLAY" && kustomize edit set image "boutique/frontend=boutique/frontend:${VERSION}")
-git -C "$REPO_ROOT" --no-pager diff -- "platform/deploy/overlays/$ENV"
+[[ "$CURRENT" != "boutique/frontend:${VERSION}" ]] \
+  || die "$ENV already declares boutique/frontend:${VERSION} in Git: nothing to release"
+# Only the newTag value changes (see set_image_tag in lib.sh for why not
+# "kustomize edit set image"). Any check below failing restores the file.
+restore_overlay() { git -C "$REPO_ROOT" checkout -- "$KREL"; }
+set_image_tag "$REPO_ROOT/$KREL" boutique/frontend "$VERSION" \
+  || die "could not set the newTag in $KREL: file left unchanged"
+NUMSTAT="$(git -C "$REPO_ROOT" diff --numstat -- "$KREL")"
+[[ "$NUMSTAT" == $'1\t1\t'"$KREL" ]] \
+  || { restore_overlay; die "expected exactly one changed line in $KREL, got '${NUMSTAT:-no change}'"; }
+kustomize build "$OVERLAY" > "$AFTER" || { restore_overlay; die "kustomize build failed after the edit"; }
+# The rendered manifests must differ by the frontend image line only.
+# Exactly two diff lines, whatever the indentation: old image out, new in.
+RENDER_DIFF="$(diff "$BEFORE" "$AFTER" | grep '^[<>]' || true)"
+if [[ "$(grep -c . <<<"$RENDER_DIFF")" != 2 ]] \
+  || ! grep -Ex "< +image: ${CURRENT//./\\.}" <<<"$RENDER_DIFF" >/dev/null \
+  || ! grep -Ex "> +image: boutique/frontend:${VERSION//./\\.}" <<<"$RENDER_DIFF" >/dev/null; then
+  restore_overlay; die "rendered manifests changed beyond the frontend image:"$'\n'"$RENDER_DIFF"
+fi
+ok "only the newTag line changed; rendered output differs by the frontend image only"
+git -C "$REPO_ROOT" --no-pager diff -- "$KREL"
 
 step "Commit + push (this commit IS the release; reverting it IS the rollback)"
 # Commit only the overlay file, whatever else may be staged.
