@@ -17,7 +17,7 @@
 # turns a chart into an API, and it fits in the demo VM.
 # shellcheck source=lib.sh
 source "$(dirname "$0")/lib.sh"
-need helm kubectl git
+need helm kubectl git jq curl
 
 CHART_DIR="$REPO_ROOT/platform/krateo/boutique-service"
 DIST="$REPO_ROOT/platform/krateo/dist"
@@ -51,12 +51,36 @@ render_definition() {
   printf '%s\n' "$out"
 }
 
+# The BoutiqueService a consumer team submits (the whole "ticket").
+render_instance() {
+  cat <<YAML
+apiVersion: composition.krateo.io/v${CHART_VERSION//./-}
+kind: BoutiqueService
+metadata:
+  name: team-a-dev
+  namespace: krateo-system
+spec:
+  service:
+    name: team-a
+    owner: team-a
+    tier: bronze
+  environment: dev
+  frontend:
+    version: 1.0.0
+  git:
+    repoURL: $(repo_url)
+    targetRevision: main
+YAML
+}
+
 case "${1:-}" in
   render)
     # What "install" would apply, without applying it.
     render_repo_url "$REPO_ROOT/platform/krateo/appproject-selfservice.yaml" "$(repo_url)"
     echo "---"
     render_definition
+    echo "---"
+    render_instance
     ;;
 
   package)
@@ -95,24 +119,12 @@ case "${1:-}" in
     "$REPO_ROOT/platform/scripts/create-secrets.sh" "$INSTANCE_NS"
 
     step "A consumer team requests an instance (this is the whole 'ticket')"
-    cat <<YAML | tee /dev/stderr | k apply -f -
-apiVersion: composition.krateo.io/v${CHART_VERSION//./-}
-kind: BoutiqueService
-metadata:
-  name: team-a-dev
-  namespace: krateo-system
-spec:
-  service:
-    name: team-a
-    owner: team-a
-    tier: bronze
-  environment: dev
-  frontend:
-    version: 1.0.0
-  git:
-    repoURL: ${REPO}
-    targetRevision: main
-YAML
+    # Printed on stdout, then applied. Not "tee /dev/stderr": tee reopens the
+    # path with O_TRUNC, so with stderr redirected to a log file it wiped the
+    # log written so far (seen for real).
+    INSTANCE="$(render_instance)"
+    printf '%s\n' "$INSTANCE"
+    k apply -f - <<<"$INSTANCE"
     "$0" status
     ;;
 
@@ -121,11 +133,19 @@ YAML
     k -n krateo-system get compositiondefinitions || true
     k -n krateo-system get boutiqueservices 2>/dev/null || warn "CRD not generated yet"
     step "Argo CD Application created by the composition"
-    k -n argocd get applications -l app.kubernetes.io/managed-by=krateo || true
+    # Selected by AppProject, not by the chart's app.kubernetes.io/managed-by
+    # label: core-provider's Helm client overwrites it with "Helm" (seen for
+    # real), so that selector found nothing.
+    k -n argocd get applications -o json \
+      | jq -r '.items[] | select(.spec.project=="boutique-selfservice")
+               | "\(.metadata.name)\t\(.status.sync.status)/\(.status.health.status)\t\(.spec.destination.namespace)"' \
+      | { grep . || echo "    (no self-service Application)"; }
     step "Workload"
     k -n "$INSTANCE_NS" get pods 2>/dev/null || warn "namespace $INSTANCE_NS not created yet"
     IP="$(gateway_ip)"
-    [[ -n "$IP" ]] && echo "    curl -s --resolve team-a.dev.boutique.local:80:$IP http://team-a.dev.boutique.local/_healthz"
+    if [[ -n "$IP" ]]; then
+      echo "    curl -s --resolve team-a.dev.boutique.local:80:$IP http://team-a.dev.boutique.local/_healthz"
+    fi
     ;;
 
   cleanup)
