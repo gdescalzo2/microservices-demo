@@ -5,40 +5,40 @@ kind: Kustomization
 namespace: boutique-dev
 
 resources:
-- namespace.yaml
-- ../../base
-- httproute.yaml
-- rbac.yaml
+  - namespace.yaml
+  - ../../base
+  - httproute.yaml
+  - rbac.yaml
 
 components:
-- ../../components/kind-sizing
-- ../../components/observability
+  - ../../components/kind-sizing
+  - ../../components/observability
 
 labels:
-- includeTemplates: true
-  pairs:
-    platform.example.com/environment: dev
+  - pairs:
+      platform.example.com/environment: dev
+    includeSelectors: false
+    includeTemplates: true
 
 # Frontend version deployed in DEV. Changing this line (commit + push) is the
 # whole "release" for Argo CD. Used by the rollout demo (1.0.0 -> 1.1.0).
 images:
-- name: boutique/frontend
-  newName: boutique/frontend
-  newTag: 1.1.0
+  - name: boutique/frontend
+    newTag: 1.0.0
 
+patches:
   # Strategic merge: env entries are matched by name (index-based JSON
   # patches silently hit the wrong variable if upstream reorders env).
-patches:
-- patch: |-
-    apiVersion: apps/v1
-    kind: Deployment
-    metadata:
-      name: loadgenerator
-    spec:
-      template:
-        spec:
-          containers:
-            - name: main
-              env:
-                - name: USERS
-                  value: "3"
+  - patch: |-
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata:
+        name: loadgenerator
+      spec:
+        template:
+          spec:
+            containers:
+              - name: main
+                env:
+                  - name: USERS
+                    value: "3"
