@@ -28,7 +28,9 @@ spec:
     # CPU starvation, not measured). Backoff 5s,10s,20s,40s,80s (155s in all)
     # plus the attempts themselves: measured on this VM, a failed attempt
     # ~24s and a full sync of dev ~2m40s with a cold repo-server, so the worst
-    # case is ~7 min; release.sh/rollback.sh wait 600s. Same revision on
+    # case is ~7 min; release.sh/rollback.sh wait 600s. These durations were
+    # measured while a browser on the VM used 100% CPU (reported by the
+    # operator): probably overestimated, so 600s errs on the safe side. Same revision on
     # retry (refresh: false): the release is that exact commit.
     retry:
       limit: 5
@@ -65,7 +67,9 @@ spec:
     # CPU starvation, not measured). Backoff 5s,10s,20s,40s,80s (155s in all)
     # plus the attempts themselves: measured on this VM, a failed attempt
     # ~24s and a full sync of dev ~2m40s with a cold repo-server, so the worst
-    # case is ~7 min; release.sh/rollback.sh wait 600s. Same revision on
+    # case is ~7 min; release.sh/rollback.sh wait 600s. These durations were
+    # measured while a browser on the VM used 100% CPU (reported by the
+    # operator): probably overestimated, so 600s errs on the safe side. Same revision on
     # retry (refresh: false): the release is that exact commit.
     retry:
       limit: 5
@@ -104,7 +108,9 @@ spec:
     # CPU starvation, not measured). Backoff 5s,10s,20s,40s,80s (155s in all)
     # plus the attempts themselves: measured on this VM, a failed attempt
     # ~24s and a full sync of dev ~2m40s with a cold repo-server, so the worst
-    # case is ~7 min; release.sh/rollback.sh wait 600s. Same revision on
+    # case is ~7 min; release.sh/rollback.sh wait 600s. These durations were
+    # measured while a browser on the VM used 100% CPU (reported by the
+    # operator): probably overestimated, so 600s errs on the safe side. Same revision on
     # retry (refresh: false): the release is that exact commit.
     retry:
       limit: 5
