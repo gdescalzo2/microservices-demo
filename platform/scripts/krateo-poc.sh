@@ -23,6 +23,8 @@ CHART_DIR="$REPO_ROOT/platform/krateo/boutique-service"
 DIST="$REPO_ROOT/platform/krateo/dist"
 CHART_VERSION="$(awk '/^version:/{print $2}' "$CHART_DIR/Chart.yaml")"
 TGZ="boutique-service-${CHART_VERSION}.tgz"
+# Pinned like the other charts (README "Pinned versions"); override with the variable.
+KRATEO_CORE_PROVIDER_VERSION="${KRATEO_CORE_PROVIDER_VERSION:-1.0.0}"
 INSTANCE_NS="boutique-team-a-dev"
 
 raw_chart_url() {
@@ -78,7 +80,7 @@ case "${1:-}" in
     helm repo add krateo https://charts.krateo.io >/dev/null 2>&1 || true
     helm repo update krateo >/dev/null
     helm --kube-context "$KUBE_CONTEXT" upgrade --install krateo-core-provider krateo/core-provider \
-      -n krateo-system --create-namespace --wait --timeout 10m ${KRATEO_CORE_PROVIDER_VERSION:+--version "$KRATEO_CORE_PROVIDER_VERSION"}
+      -n krateo-system --create-namespace --wait --timeout 10m --version "$KRATEO_CORE_PROVIDER_VERSION"
     ok "core-provider running"
 
     step "Argo CD guardrail for self-service instances (AppProject boutique-selfservice)"

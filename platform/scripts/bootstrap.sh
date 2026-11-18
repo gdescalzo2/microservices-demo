@@ -15,6 +15,15 @@ source "$(dirname "$0")/lib.sh"
 
 need docker kind kubectl helm git curl openssl
 
+# Pinned versions, verified together on 2026-11-18 (README "Pinned versions").
+# Override per run with the same variable, e.g. KPS_VERSION=94.0.0. Unpinned
+# charts made Kyverno 1.20 arrive unannounced and refuse the legacy policies.
+CPK_VERSION="${CPK_VERSION:-v0.12.0}"                       # cloud-provider-kind image
+METRICS_SERVER_VERSION="${METRICS_SERVER_VERSION:-3.14.0}"  # chart (app 0.9.0)
+KPS_VERSION="${KPS_VERSION:-93.3.1}"                        # kube-prometheus-stack chart
+KYVERNO_VERSION="${KYVERNO_VERSION:-3.10.0}"                # chart (app v1.20.0)
+ARGOCD_VERSION="${ARGOCD_VERSION:-10.18.0}"                 # argo-cd chart (app v3.6.1)
+
 REPO="$(repo_url)"
 [[ "$REPO" != *YOUR_GITHUB_USER* ]] || die "GIT_REPO_URL still has the placeholder: set it to your fork"
 
@@ -79,7 +88,6 @@ step "cloud-provider-kind (LoadBalancer IPs + Gateway API controller)"
 if docker ps --format '{{.Names}}' | grep -x cloud-provider-kind >/dev/null; then
   ok "already running"
 else
-  CPK_VERSION="${CPK_VERSION:-$(basename "$(curl -fsSL -o /dev/null -w '%{url_effective}' https://github.com/kubernetes-sigs/cloud-provider-kind/releases/latest)")}"
   docker rm -f cloud-provider-kind >/dev/null 2>&1 || true
   docker run -d --name cloud-provider-kind --restart unless-stopped --network host \
     -v /var/run/docker.sock:/var/run/docker.sock \
@@ -137,7 +145,7 @@ VALUES="$REPO_ROOT/platform/addons/values"
 H=(helm --kube-context "$KUBE_CONTEXT" upgrade --install --wait --timeout 10m)
 
 "${H[@]}" metrics-server metrics-server/metrics-server -n kube-system \
-  -f "$VALUES/metrics-server.yaml" ${METRICS_SERVER_VERSION:+--version "$METRICS_SERVER_VERSION"} >/dev/null
+  -f "$VALUES/metrics-server.yaml" --version "$METRICS_SERVER_VERSION" >/dev/null
 ok "metrics-server"
 
 # Grafana admin password: generated once, then reused from the existing Secret.
@@ -145,15 +153,15 @@ GRAFANA_PW="$(k -n monitoring get secret kube-prometheus-stack-grafana -o jsonpa
 [[ -n "$GRAFANA_PW" ]] || GRAFANA_PW="$(openssl rand -hex 16)"
 "${H[@]}" kube-prometheus-stack prometheus-community/kube-prometheus-stack -n monitoring --create-namespace \
   -f "$VALUES/kube-prometheus-stack.yaml" --set-string grafana.adminPassword="$GRAFANA_PW" \
-  ${KPS_VERSION:+--version "$KPS_VERSION"} >/dev/null
+  --version "$KPS_VERSION" >/dev/null
 ok "kube-prometheus-stack"
 
 "${H[@]}" kyverno kyverno/kyverno -n kyverno --create-namespace \
-  -f "$VALUES/kyverno.yaml" ${KYVERNO_VERSION:+--version "$KYVERNO_VERSION"} >/dev/null
+  -f "$VALUES/kyverno.yaml" --version "$KYVERNO_VERSION" >/dev/null
 ok "kyverno"
 
 "${H[@]}" argocd argo/argo-cd -n argocd --create-namespace \
-  -f "$VALUES/argocd.yaml" ${ARGOCD_VERSION:+--version "$ARGOCD_VERSION"} >/dev/null
+  -f "$VALUES/argocd.yaml" --version "$ARGOCD_VERSION" >/dev/null
 ok "argo-cd"
 
 step "Frontend image (our fork, with /metrics)"

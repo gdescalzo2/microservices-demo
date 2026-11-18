@@ -133,7 +133,24 @@ platform/scripts/bootstrap.sh          # 15-25 minutes the first time (image dow
 
 From then on, **Git drives the cluster**.
 
-> Helm chart versions are not pinned (the latest stable is installed). After the first successful run, pin them with `KPS_VERSION`, `KYVERNO_VERSION`, `ARGOCD_VERSION` and `METRICS_SERVER_VERSION` for reproducibility (`helm list -A` shows the installed ones).
+### Pinned versions
+
+Every external component is pinned, so a re-run installs exactly what was verified. Verified together on 2026-11-18 (kind v0.33.0 node image Kubernetes v1.37.0). Unpinned "latest" installs had made Kyverno 1.20 arrive unannounced and refuse the legacy policies ([ai-usage §3.11](docs/challenge/ai-usage.md)).
+
+| Component | Version | Where | Override |
+|---|---|---|---|
+| metrics-server chart | 3.14.0 (app 0.9.0) | `bootstrap.sh` | `METRICS_SERVER_VERSION` |
+| kube-prometheus-stack chart | 93.3.1 | `bootstrap.sh` | `KPS_VERSION` |
+| kyverno chart | 3.10.0 (Kyverno v1.20.0) | `bootstrap.sh` | `KYVERNO_VERSION` |
+| argo-cd chart | 10.18.0 (Argo CD v3.6.1) | `bootstrap.sh` | `ARGOCD_VERSION` |
+| cloud-provider-kind image | v0.12.0 | `bootstrap.sh` | `CPK_VERSION` |
+| Krateo core-provider chart | 1.0.0 | `krateo-poc.sh` | `KRATEO_CORE_PROVIDER_VERSION` |
+| kind / kubectl / helm | v0.33.0 / v1.37.2 / v4.3.2 | `install-tools.sh` | `KIND_VERSION`, `KUBECTL_VERSION`, `HELM_VERSION` |
+| kustomize / kubeconform | v5.8.3 / v0.8.0 | `install-tools.sh` | `KUSTOMIZE_VERSION`, `KUBECONFORM_VERSION` |
+| argocd CLI / k9s | v3.6.1 / v0.51.0 | `install-tools.sh` | `ARGOCD_CLI_VERSION`, `K9S_VERSION` |
+| yamllint / shellcheck (CI and local) | 1.38.0 / 0.11.0.1 | `.github/workflows/platform-ci.yaml` | — |
+
+To upgrade one component: run with the override, verify (smoke tests, Argo CD Synced/Healthy, alerts), then change the default in the script and commit. `install-tools.sh` reports any installed tool that differs from its pin.
 
 ## 6. Verification and tests
 
