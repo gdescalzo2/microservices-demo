@@ -162,6 +162,17 @@ The next entries come from the **first real bootstrap** in the VM (Ubuntu 26.04,
 - *Fix*: `set_image_tag` in `lib.sh` changes only the `newTag` value of the entry named after the image (indentation, quoting and trailing comments kept; fails with the file untouched unless exactly one entry matches). `release.sh` now requires `git diff --numstat` "1 1" and a rendered diff of exactly two lines (old image, new image), or it restores the file and stops. Tested on the real overlays and on crafted cases (quoted values: a first version dropped the quotes, which would turn a tag like `1.10` into the number 1.1; fixed), and the real `release.sh` block run in a temporary git worktree, with stubs to exercise the restore paths. The dev release redone with the fixed script (`14279bcb`): one line changed.
 - *Lesson*: read the diff of every generated commit, even when the tool "only sets a tag". And a comparison that cannot fail (two empty files) is not a check: verify the inputs are non-empty first.
 
+**3.18 The Krateo PoC on a real cluster: what the script got wrong.**
+- *What happened*: the PoC worked end to end (chart → CRD `v0-1-0` → controller → Helm release → Argo CD Application → 12 pods → `/_healthz` 200), but `krateo-poc.sh` itself had four defects, none of them visible without a cluster:
+  1. `install` would have pointed the CompositionDefinition at an unpublished `oci://ghcr.io` URL: its `sed` looked for the `YOUR_GITHUB_USER` placeholder that `set-github-user.sh` had already replaced (fixed earlier with `render_repo_url` and `render_definition`, which fail when the URL is not exactly the expected one);
+  2. `status` selected Applications by `app.kubernetes.io/managed-by=krateo` and printed "No resources found" for a healthy instance: core-provider's Helm client overwrites that label with `Helm`;
+  3. the instance manifest was echoed with `tee /dev/stderr`: with stderr redirected to a log file, `tee` reopened the file with `O_TRUNC` and wiped the log written so far (the first install log was lost and full of NUL bytes);
+  4. `status` ended with `[[ -n "$IP" ]] && echo …`, which returns 1 when the Gateway has no address and makes `status` fail.
+- *Also*: `install` returned 0 as soon as the instance object was created; it does not wait for the workload, so "exit 0" did not mean "the instance works". The end-to-end check was done by hand.
+- *Fix*: `status` selects by AppProject `boutique-selfservice`; the manifest comes from `render_instance`, is printed on stdout and applied from a variable (no second open of the log); explicit `if` for the IP; `render` also prints the instance manifest.
+- *Verification*: `status` shows `team-a-dev Synced/Healthy` and exits 0; `render > log 2>&1` gives a complete log with no NUL bytes; the rendered instance is `unchanged` in a server-side dry run against the live object; the old `tee /dev/stderr` pattern, run the same way, loses its first line and leaves NUL bytes, so the test does detect the defect. The empty-IP branch is not exercised (it needs a Gateway without an address).
+- *Lesson*: a PoC script is code too. Every assumption it makes about a third-party tool (label ownership, placeholders already replaced, file descriptors) has to be checked against the real system, and "exit 0" has to mean the outcome the user cares about.
+
 ## 4. Troubleshooting case with AI
 
 Run on 2026-11-17 in the VM, with Claude Code operating the cluster directly (kubectl, Prometheus API), scenario `chaos.sh netpol-typo dev`.
@@ -221,7 +232,7 @@ An honest list of what static validation cannot guarantee. Tick them during the 
 - [x] kube-prometheus-stack, Kyverno and Argo CD values with the current chart versions: kube-prometheus-stack 93.3.1, kyverno 3.10.0, argo-cd 10.18.0, metrics-server 3.14.0. Three values needed runtime fixes: Grafana resources and plugins (§3.9), Kyverno reports-controller limits (§3.11)
 - [x] Dashboard panels and alerts with real data: every panel query run against Prometheus for dev and prod returns data (the "waiting reason" query is empty while nothing waits, as expected); 8 rules loaded with correct runbook anchors; `BoutiqueCheckoutFailing` fired and resolved in the netpol-typo run. Two leftovers from disabling Alertmanager fixed (an always-firing rule, a dangling Grafana datasource)
 - [x] `helm lint`/`helm template` of the Krateo chart: verified in CI (1 chart linted, rendered Application valid under `kubeconform -strict`)
-- [ ] Krateo PoC: CDC permissions to create Applications in `argocd`
+- [x] Krateo PoC: CDC permissions to create Applications in `argocd`: the instance's Helm release created the Application in `argocd` with no extra RBAC; instance Synced/Healthy, 12/12 pods, `/_healthz` 200 through the Gateway (§3.18, krateo.md §5)
 - [ ] Real bootstrap duration and memory usage (estimate: 6–7 GB)
 
 ## 7. Value delivered and limits

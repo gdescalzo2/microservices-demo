@@ -103,12 +103,15 @@ platform/scripts/krateo-poc.sh status
 - The chart is served as a `.tgz` from the repository (raw GitHub URL), to avoid handling registry credentials. Production: an OCI registry (`helm push … oci://ghcr.io/<org>/charts`).
 - The instance Secret is created by the script (platform prerequisite).
 
-**To verify during execution** (not verifiable without a cluster):
-- whether the CDC gets the permissions from chart-inspector to create Applications in the `argocd` namespace (a resource outside the instance namespace);
-- how the form renders in the portal.
+**Verified on the cluster** (2026-11-18, core-provider 1.0.0, kind / Kubernetes v1.37):
+- **Chart source:** core-provider downloads the chart from the raw GitHub `.tgz` URL. Direct `.tgz` URLs are a documented chart source in the Krateo docs ("TGZ Archive (direct URL)"). `krateo-poc.sh render` prints the manifests `install` applies and fails if the chart URL or version is not the expected one.
+- **Generated API:** chart version `0.1.0` becomes the CRD version `composition.krateo.io/v0-1-0` (`BoutiqueService`), served and stored; core-provider starts a dedicated controller (`boutiqueservices-v0-1-0-controller`). This naming rule is not written in the Krateo docs, so it was checked on the cluster.
+- **Permissions (the open point above):** the instance's Helm release did create the Argo CD `Application` in the `argocd` namespace; no extra RBAC was needed.
+- **Namespace and guardrails:** the instance namespace is created from the dev overlay with all its labels (PSA `restricted`, gateway access, environment), so policies, probes and monitoring apply to it; the `HTTPRoute` gets the instance hostname (`team-a.dev.boutique.local`) and `/_healthz` answers through the Gateway.
+- **Labels:** core-provider's Helm client overwrites `app.kubernetes.io/managed-by` with `Helm`, so the chart's `managed-by: krateo` never reaches the cluster. `krateo-poc.sh status` therefore selects self-service Applications by AppProject (`boutique-selfservice`). Changing the label in the chart needs a new chart version (0.1.1) and is left as a follow-up.
+- **Resource cost:** an instance is a third full environment (12 pods). The first install started all 12 together on a VM already close to its memory limit and contributed to an overload of the VM (load ~80); with Argo CD sync waves (the `staged-sync` component the instance inherits from the dev overlay) and 2 GB more RAM, the reinstall peaked at load 4.6.
 
-If the first point does not work, the alternative is for the chart to render the manifests directly, without Argo CD. That loses GitOps uniformity.
-
+**Not verified:** the portal form (the portal is not installed).
 ## 6. Benefits, prerequisites, limits, risks
 
 **Benefits**
