@@ -5,52 +5,52 @@ kind: Kustomization
 namespace: boutique-prod
 
 resources:
-  - namespace.yaml
-  - ../../base
-  - httproute.yaml
-  - rbac.yaml
-  - frontend-hpa.yaml
-  - frontend-pdb.yaml
+- namespace.yaml
+- ../../base
+- httproute.yaml
+- rbac.yaml
+- frontend-hpa.yaml
+- frontend-pdb.yaml
 
 components:
-  - ../../components/kind-sizing
-  - ../../components/observability
+- ../../components/kind-sizing
+- ../../components/observability
 
 labels:
-  - pairs:
-      platform.example.com/environment: prod
-    includeSelectors: false
-    includeTemplates: true
+- includeTemplates: true
+  pairs:
+    platform.example.com/environment: prod
 
 images:
-  - name: boutique/frontend
-    newTag: 1.0.0
+- name: boutique/frontend
+  newName: boutique/frontend
+  newTag: 1.1.0
 
 # No "replicas:" for the frontend on purpose: the HPA owns the replica count
 # (minReplicas: 2). Declaring it here too would make Argo CD and the HPA fight.
 
-patches:
   # The HPA computes utilization against the CPU *request*: restore a
   # realistic request for the frontend (kind-sizing lowers it to 20m).
-  - target:
-      kind: Deployment
-      name: frontend
-    patch: |-
-      - op: replace
-        path: /spec/template/spec/containers/0/resources/requests/cpu
-        value: 100m
   # Strategic merge: env entries are matched by name (index-based JSON
   # patches silently hit the wrong variable if upstream reorders env).
-  - patch: |-
-      apiVersion: apps/v1
-      kind: Deployment
-      metadata:
-        name: loadgenerator
-      spec:
-        template:
-          spec:
-            containers:
-              - name: main
-                env:
-                  - name: USERS
-                    value: "5"
+patches:
+- patch: |-
+    - op: replace
+      path: /spec/template/spec/containers/0/resources/requests/cpu
+      value: 100m
+  target:
+    kind: Deployment
+    name: frontend
+- patch: |-
+    apiVersion: apps/v1
+    kind: Deployment
+    metadata:
+      name: loadgenerator
+    spec:
+      template:
+        spec:
+          containers:
+            - name: main
+              env:
+                - name: USERS
+                  value: "5"
