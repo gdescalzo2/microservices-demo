@@ -242,6 +242,7 @@ argocd app diff $APP          # with the CLI (after argocd login)
 | `pods ... is forbidden: violates PodSecurity "restricted"` | The container does not meet PSA restricted (root, capabilities, seccomp) |
 | `resource ... is not permitted in project` | The AppProject does not allow that resource or namespace (guardrail working as intended) |
 | `OutOfSync` with no errors | Manual drift (dev), or a new commit not synced yet: run `argocd_sync` or wait for polling (60 s) |
+| `ComparisonError: Failed to load target state ... dial tcp <IP>:8081: connect: connection refused` | The Argo CD repo-server was down (e.g. restarted by its liveness probe under CPU pressure). Syncs retry 5 times with backoff (`syncPolicy.retry`, and the same on `argocd_sync`): check `.status.operationState.retryCount` and `k -n argocd get pods -l app.kubernetes.io/name=argocd-repo-server` before acting |
 
 ### 2.10 The site does not respond (no pod in error)
 
