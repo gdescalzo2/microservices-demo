@@ -263,6 +263,11 @@ platform/scripts/bootstrap.sh     # idempotent: detects the stale container, rem
 getent hosts dev.boutique.local   # the container may get a new IP: bootstrap prints the /etc/hosts line to use
 ```
 
+Two variants seen for real on 2026-11-19:
+
+- cloud-provider-kind ran for 15+ minutes **without writing any log line**, so the xDS port could not be read from `docker logs`. `bootstrap.sh` then reads it from the socket: cloud-provider-kind uses host networking and serves xDS on the Docker bridge gateway address, so the port is the only TCP listener there (`ss -ltn 'src 172.17.0.1'`). With zero or several listeners it does not guess and skips the check with a warning.
+- Docker gave the node and the Envoy container **each other's IP** (node `172.18.0.2`, Gateway `172.18.0.3`, the opposite of before). The Gateway works, but `/etc/hosts` points to the old IP: connection refused again. `bootstrap.sh` compares the exact `/etc/hosts` line and offers to update it.
+
 A `404` from the Gateway (not from the frontend) means no HTTPRoute matches the host. Typical causes: wrong hostname, or a namespace without the `platform.example.com/gateway-access=true` label.
 
 <a id="rb-host-cpu"></a>
