@@ -199,6 +199,8 @@ The next entries come from the **first real bootstrap** in the VM (Ubuntu 26.04,
 - A background performance sampler was reported as started after a reboot; it had not run at all: `/tmp` is a tmpfs, the script was gone, and the `ls … && nohup …` chain failed silently. Now: after starting a background process, check that it is alive and writing.
 - Two Gateway checks used the hostname `boutique-dev.local` instead of `dev.boutique.local`; the 404 it produced was noticed and the check redone with the right name.
 - An `EXIT=7` was reported without saying it was the last `curl`, which suggested `kubectl` had failed.
+- While re-pointing an image tag on the node, a chain of state-changing commands was joined with `;`: the first command failed (wrong image name) and the rest ran anyway. Nothing changed, but it could have. Rerun with `set -e`, one step at a time.
+- On this VM `grep` is an alias for `ugrep` in interactive shells (seen in an `ugrep: warning`). The agent's ad-hoc commands were running `ugrep`; the scripts are not affected (aliases do not apply to scripts). Ad-hoc commands now use `command grep`.
 - *Lesson*: report every exit code next to the command it belongs to, and verify that a started process actually exists before relying on its output.
 
 **3.23 Rebuilding a version silently changed what the tag meant.**
@@ -211,6 +213,7 @@ The next entries come from the **first real bootstrap** in the VM (Ubuntu 26.04,
 **3.24 The demo dry run, run for real end to end.**
 - *What happened*: all 11 steps of `demo.md` were run from the terminal on 2026-11-19. Releases took 67–94 s each, the prod smoke test passed 11/11, self-heal reverted a bad image in ~8 s. Seven commands or messages in `demo.md` were wrong when actually run: `tree` not installed; a `<first-upstream-commit>` placeholder; `docker run … &` + `kill %1` (replaced by `-d --name` + `docker stop`); the message "Git is the only way to change the cluster" (false in dev, where self-heal is off); `jq` stopping at the first plain-text line the upstream frontend prints; `curl` right after `port-forward &` (connection refused: no wait); no context check (`kubectl` without `--context`).
 - *The serious one*: in step 8 the `netpol-typo` fault disappeared within 20 s. Step 7 had just pushed the prod release; Argo CD's auto-sync of dev picked up that commit ~90 s later, right after the injection, and re-applied Git. `chaos.sh` now refreshes the Application and waits until it is synced at `origin/main` before injecting; rerun, the fault held and checkout failed as expected (smoke test 1 of 11 failed, `i/o timeout` to paymentservice, app `OutOfSync`).
+- *Open*: the prod frontend metrics showed sporadic `POST /cart/checkout` 500s with only the load generator as traffic. Prometheus places them, per pod, at 09:02, 09:33, 11:51 and 11:53 UTC: not during the reboot storm (11:23–11:29 UTC). The pods were replaced by the rollback before their logs were read, so the error text is lost and the cause is **not determined**. Next time: `kubectl logs ... | jq -cR 'fromjson? | select(.severity=="error")'` as soon as the counter moves.
 - *Lesson*: a demo script is only rehearsed when every command has been run, in order, on the real system: each step can change the state the next one depends on.
 
 ## 4. Troubleshooting case with AI
@@ -274,6 +277,7 @@ An honest list of what static validation cannot guarantee. Tick them during the 
 - [x] `helm lint`/`helm template` of the Krateo chart: verified in CI (1 chart linted, rendered Application valid under `kubeconform -strict`)
 - [x] Krateo PoC: CDC permissions to create Applications in `argocd`: the instance's Helm release created the Application in `argocd` with no extra RBAC; instance Synced/Healthy, 12/12 pods, `/_healthz` 200 through the Gateway (§3.18, krateo.md §5)
 - [x] Memory usage: peak 7.7 GB in use (`MemTotal − MemAvailable`, Prometheus, 24 h including bootstraps and the Krateo instance), against the 6–7 GB estimate. Sizing and swap in §3.19–§3.20
+- [ ] Cause of the sporadic prod checkout 500s (§3.24): not determined
 - [ ] Real bootstrap duration **from scratch**: not re-measured. A rerun on an existing cluster (all steps idempotent, Gateway repaired) took under 4 minutes
 
 ## 7. Value delivered and limits

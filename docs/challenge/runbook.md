@@ -300,7 +300,10 @@ grep -E '^(workingset_refault_file|pswpin|pswpout|zswpwb)' /proc/vmstat   # run 
 
 Thousands of `workingset_refault_file` per second mean the kernel keeps dropping and re-reading files it still needs (executables, libraries): page cache thrashing. Seen for real at ~83,000/s with no swap (ai-usage §3.19). With a swap file, rarely used anonymous memory can leave RAM instead.
 
-**After a VM reboot** the kubelet restarts every pod at once (the sync waves of `staged-sync` apply to Argo CD syncs, not to a node restart). Measured with 4 vCPU and the 3.5 cap (boot at 12:23): load 82 at 12:25, CPU pressure ~78% until 12:29, load below 10 from 12:32, memory pressure below 1% throughout. Wait for it to settle, then rerun `bootstrap.sh` for the Gateway (§2.10).
+**After a VM reboot** the kubelet restarts every pod at once (the sync waves of `staged-sync` apply to Argo CD syncs, not to a node restart). Measured with 4 vCPU and the 3.5 cap (boot at 12:23): load 82 at 12:25, CPU pressure ~78% until 12:29, load below 10 from 12:32, memory pressure below 1% throughout. Wait for it to settle, then rerun `bootstrap.sh` for the Gateway (§2.10). Two things that look alarming after a reboot and are not:
+
+- `local-path-provisioner` in `CrashLoopBackOff`: it exits with `level=fatal ... Get "https://10.96.0.1:443/..."` while the API server is not up yet, and recovers by itself (seen: 17 restarts, Running about 3 minutes after boot).
+- High restart counters (seen: 27–41 on the Prometheus operator, kube-state-metrics, metrics-server, argocd-server, scheduler, controller-manager): they add up across VM reboots and past incidents. What matters is whether the counter still grows: `kubectl get pods -A -w`, or the `RESTARTS` column with its "(N m ago)".
 
 ## 3. Rollback
 
