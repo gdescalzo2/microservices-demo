@@ -85,12 +85,34 @@ set_image_tag() { # set_image_tag <kustomization.yaml> <image name> <tag>
 
 # xDS port cloud-provider-kind listens on in its *current* run (it picks a
 # random port at every start). Logs are read only since the container's last
-# start: older runs' lines are still in "docker logs". Empty if not logged yet.
+# start: older runs' lines are still in "docker logs". If the line is missing
+# (seen for real after a VM reboot: the container ran for 15+ minutes with no
+# log output at all), fall back to cpk_xds_port_from_socket. Empty if neither
+# source gives a port yet.
 cpk_xds_port() {
-  local since
+  local since port
   since="$(docker inspect -f '{{.State.StartedAt}}' cloud-provider-kind 2>/dev/null)" || return 0
-  docker logs --since "$since" cloud-provider-kind 2>&1 \
-    | sed -n 's/.*"XDS management server listening".* port=\([0-9][0-9]*\).*/\1/p' | tail -1
+  port="$(docker logs --since "$since" cloud-provider-kind 2>&1 \
+    | sed -n 's/.*"XDS management server listening".* port=\([0-9][0-9]*\).*/\1/p' | tail -1)"
+  if [[ -z "$port" ]]; then
+    port="$(cpk_xds_port_from_socket)"
+  fi
+  printf '%s\n' "$port"
+}
+
+# cloud-provider-kind runs with host networking and serves xDS on the Docker
+# bridge gateway address (172.17.0.1 here), the address its Envoy containers
+# connect to. Prints the TCP port listening on that address, only if there is
+# exactly one: with none (not started yet) or several, the port is ambiguous
+# and nothing is printed.
+cpk_xds_port_from_socket() {
+  local ip ports
+  ip="$(docker network inspect bridge -f '{{(index .IPAM.Config 0).Gateway}}' 2>/dev/null)" || return 0
+  [[ "$ip" =~ ^[0-9]+(\.[0-9]+){3}$ ]] || return 0
+  ports="$(ss -ltnH "src $ip" 2>/dev/null | awk '{n = split($4, a, ":"); print a[n]}' | sort -u)"
+  if [[ -n "$ports" && "$(wc -l <<<"$ports")" -eq 1 ]]; then
+    printf '%s\n' "$ports"
+  fi
 }
 
 # xDS port baked into an Envoy gateway container created by

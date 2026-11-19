@@ -13,7 +13,7 @@
 # shellcheck source=lib.sh
 source "$(dirname "$0")/lib.sh"
 
-need docker kind kubectl helm git curl openssl
+need docker kind kubectl helm git curl openssl ss
 
 # Pinned versions, verified together on 2026-11-18 (README "Pinned versions").
 # Override per run with the same variable, e.g. KPS_VERSION=94.0.0. Unpinned
@@ -194,7 +194,9 @@ if [[ -z "$IP" ]]; then
 else
   ok "Gateway IP: $IP"
   HOSTS_LINE="$IP $(host_for dev) $(host_for prod)"
-  if grep -q "# boutique-challenge" /etc/hosts && grep -q "^$IP " /etc/hosts; then
+  # Exact line match: after a VM reboot Docker can hand the node and the
+  # gateway container each other's IP (seen for real: 172.18.0.2 <-> .3).
+  if grep -Fxq "$HOSTS_LINE # boutique-challenge" /etc/hosts; then
     ok "/etc/hosts already up to date"
   else
     echo "    /etc/hosts needs: $HOSTS_LINE"
