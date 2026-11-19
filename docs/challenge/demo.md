@@ -18,10 +18,13 @@ Each step maps to one mandatory point of the challenge (§7).
 | Grafana | http://localhost:3000 → dashboard **Online Boutique - Overview** |
 
 **Pre-flight (5 minutes before)**:
+- `kubectl config current-context` is `kind-boutique` (the commands below do not pass `--context`);
+- after a VM reboot: wait for the load to settle and run `bootstrap.sh` (Gateway, `/etc/hosts`, [runbook §2.10](runbook.md));
 - `smoke-test.sh dev && smoke-test.sh prod` pass;
 - every Argo CD app is `Synced/Healthy`;
 - no alerts in Prometheus `/alerts`;
-- the `boutique/frontend:1.1.0` image is **already built** (`build-frontend.sh 1.1.0`), if you want to skip the live build wait.
+- the `boutique/frontend:1.1.0` image is **already built** (`build-frontend.sh 1.1.0`), if you want to skip the live build wait (a new version takes ~2.5 minutes). With the image already on the node, step 2 prints "already on the kind node" and builds nothing: a version is never rebuilt without `FORCE=1` (ai-usage §3.23);
+- dev is on `1.0.0` (`release.sh dev 1.0.0` if not).
 
 ---
 
@@ -30,7 +33,7 @@ Each step maps to one mandatory point of the challenge (§7).
 ```bash
 git clone https://github.com/<user>/microservices-demo.git && cd microservices-demo
 tree -L 3 platform docs/challenge
-git diff --stat <first-upstream-commit>..HEAD -- src/    # code changes: 4 frontend files
+git diff --stat c7cb6d5b..HEAD -- src/    # c7cb6d5b = last upstream commit before the fork; code changes: 4 frontend files
 ```
 
 Message: *"I did not rewrite the app. I reused the upstream Kustomize and added a platform layer on top."* Show `platform/deploy/base/kustomization.yaml`: the upstream base, the upstream NetworkPolicy component, the patches.
@@ -39,12 +42,12 @@ Message: *"I did not rewrite the app. I reused the upstream Kustomize and added 
 
 ```bash
 sed -n '/Challenge/,/^}/p' src/frontend/main.go          # what changed in the code
-platform/scripts/build-frontend.sh 1.1.0                  # docker build + kind load
-docker run --rm -p 18080:8080 -p 19090:9090 -e PORT=8080 \
+platform/scripts/build-frontend.sh 1.1.0                  # docker build + kind load (nothing if already on the node)
+docker run --rm -d --name demo-frontend -p 18080:8080 -p 19090:9090 -e PORT=8080 \
   -e PRODUCT_CATALOG_SERVICE_ADDR=x:1 -e CURRENCY_SERVICE_ADDR=x:1 -e CART_SERVICE_ADDR=x:1 \
   -e RECOMMENDATION_SERVICE_ADDR=x:1 -e SHIPPING_SERVICE_ADDR=x:1 -e CHECKOUT_SERVICE_ADDR=x:1 \
-  -e AD_SERVICE_ADDR=x:1 -e SHOPPING_ASSISTANT_SERVICE_ADDR=x:1 boutique/frontend:1.1.0 &
-sleep 2; curl -s localhost:18080/_healthz; curl -s localhost:19090/metrics | grep build_info; kill %1
+  -e AD_SERVICE_ADDR=x:1 -e SHOPPING_ASSISTANT_SERVICE_ADDR=x:1 boutique/frontend:1.1.0
+sleep 2; curl -s localhost:18080/_healthz; curl -s localhost:19090/metrics | grep build_info; docker stop demo-frontend
 ```
 
 Message: the image also runs on its own. The `*_ADDR` variables are mandatory: the process panics if one is missing, a common configuration error. Then show CI in GitHub Actions: the same Dockerfile, Trivy, push to GHCR.
@@ -57,7 +60,7 @@ kubectl get ns
 kubectl -n argocd get applications
 ```
 
-Argo CD UI: the resource tree of `boutique-prod`. Message: *"After bootstrap, the only way to change the cluster is Git."*
+Argo CD UI: the resource tree of `boutique-prod`. Message: *"After bootstrap, Git is the source of truth: in prod a manual change is reverted by self-heal; in dev it is flagged OutOfSync and kept for debugging until the next commit."*
 
 ### 4. Pods, services, gateway, configuration (4 min)
 
@@ -82,8 +85,9 @@ platform/scripts/smoke-test.sh prod
 
 ```bash
 kubectl -n boutique-prod get deploy frontend -o jsonpath='{.spec.template.spec.containers[0].readinessProbe}' | jq
-kubectl -n boutique-prod logs deploy/frontend --since=2m | jq -c 'select(."http.req.path"=="/cart/checkout")' | tail -2
-kubectl -n boutique-prod port-forward svc/frontend-metrics 19090:9090 & curl -s localhost:19090/metrics | grep -E 'checkout|build_info'; kill %1
+# -R + fromjson?: the upstream frontend also prints plain-text lines ("env platform is either empty or invalid")
+kubectl -n boutique-prod logs deploy/frontend --since=2m | jq -cR 'fromjson? | select(."http.req.path"=="/cart/checkout")' | tail -2
+kubectl -n boutique-prod port-forward svc/frontend-metrics 19090:9090 & sleep 2; curl -s localhost:19090/metrics | grep -E 'checkout|build_info'; kill %1
 kubectl top pods -n boutique-prod
 ```
 
@@ -109,7 +113,7 @@ platform/scripts/chaos.sh netpol-typo dev
 # in the browser: an order on dev.boutique.local fails (or: smoke-test.sh dev -> checkout FAIL)
 ```
 
-> Do not push to `main` during the scenario: dev auto-sync would re-apply Git and silently remove the fault. The script restarts checkoutservice on purpose: an existing gRPC connection is not cut by the new policy, so without the restart orders would keep working (worth one sentence in the demo: in real life this kind of fault surfaces on the *next* deploy).
+> Do not push to `main` during the scenario: dev auto-sync would re-apply Git and silently remove the fault. `chaos.sh` first waits until Argo CD has synced the latest commit (step 7 has just pushed the prod release; in the dry run its auto-sync landed right after the injection and removed the fault). The script restarts checkoutservice on purpose: an existing gRPC connection is not cut by the new policy, so without the restart orders would keep working (worth one sentence in the demo: in real life this kind of fault surfaces on the *next* deploy).
 
 Live diagnosis, following [runbook §2.2](runbook.md#rb-checkout):
 

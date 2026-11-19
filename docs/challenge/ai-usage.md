@@ -208,6 +208,11 @@ The next entries come from the **first real bootstrap** in the VM (Ubuntu 26.04,
 - *Agent error*: the four decisions were first tested with fake `docker` and `kind` commands on `PATH`. The operator rejected it: nothing should be done "for pretend". The fake run had also produced a false failure (a bug in the fake `docker`), and it could not have shown that the ID changes at the same commit.
 - *Lesson*: a tag that can be overwritten is not a version. Scripts that build or load images must refuse to replace an existing tag unless asked explicitly. Test on the real system, isolating the test with throwaway resources rather than simulating it.
 
+**3.24 The demo dry run, run for real end to end.**
+- *What happened*: all 11 steps of `demo.md` were run from the terminal on 2026-11-19. Releases took 67–94 s each, the prod smoke test passed 11/11, self-heal reverted a bad image in ~8 s. Seven commands or messages in `demo.md` were wrong when actually run: `tree` not installed; a `<first-upstream-commit>` placeholder; `docker run … &` + `kill %1` (replaced by `-d --name` + `docker stop`); the message "Git is the only way to change the cluster" (false in dev, where self-heal is off); `jq` stopping at the first plain-text line the upstream frontend prints; `curl` right after `port-forward &` (connection refused: no wait); no context check (`kubectl` without `--context`).
+- *The serious one*: in step 8 the `netpol-typo` fault disappeared within 20 s. Step 7 had just pushed the prod release; Argo CD's auto-sync of dev picked up that commit ~90 s later, right after the injection, and re-applied Git. `chaos.sh` now refreshes the Application and waits until it is synced at `origin/main` before injecting; rerun, the fault held and checkout failed as expected (smoke test 1 of 11 failed, `i/o timeout` to paymentservice, app `OutOfSync`).
+- *Lesson*: a demo script is only rehearsed when every command has been run, in order, on the real system: each step can change the state the next one depends on.
+
 ## 4. Troubleshooting case with AI
 
 Run on 2026-11-17 in the VM, with Claude Code operating the cluster directly (kubectl, Prometheus API), scenario `chaos.sh netpol-typo dev`.
