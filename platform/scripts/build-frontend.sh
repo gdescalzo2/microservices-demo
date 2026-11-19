@@ -10,8 +10,9 @@
 #
 # A version is immutable: if the tag is already on the kind node, nothing is
 # built or loaded; if it is only in the local Docker, it is loaded as is.
-# Rebuilding always gives a new image ID (the revision label carries the
-# current commit), and loading it would silently re-point the tag on the node:
+# Rebuilding gives a new image ID even from the same commit with every step
+# cached (measured: 9.9.9 rebuilt at the same commit, c73000a5 -> e3d51179),
+# and loading it would silently re-point the tag on the node:
 # a pod recreated later would run a different image than its siblings under
 # the same version (seen for real, ai-usage §3.23).
 # shellcheck source=lib.sh
