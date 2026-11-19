@@ -69,3 +69,14 @@ patches:
       - op: add
         path: /metadata/annotations/argocd.argoproj.io~1sync-wave
         value: "11"
+  # Not a Deployment, but it must follow one: the frontend HPA (prod only)
+  # reads its target's scale. In wave 0 (the default) it was Degraded with
+  # 'deployments.apps "frontend" not found' and blocked every later wave:
+  # the first sync of prod on a fresh cluster failed after 5 retries (seen
+  # for real, 2026-11-19). Wave 11 = after the frontend (wave 10) is healthy.
+  # A target that matches nothing (dev has no HPA) is not an error.
+  - target: {kind: HorizontalPodAutoscaler, name: frontend}
+    patch: |-
+      - op: add
+        path: /metadata/annotations/argocd.argoproj.io~1sync-wave
+        value: "11"
