@@ -94,7 +94,7 @@ docs/challenge/                       # challenge documentation
 
 ## 4. Prerequisites
 
-A Linux VM or host with **4 vCPU, 10 GB RAM, 60 GB disk**. The reference setup is Ubuntu 26.04 LTS on VMware Workstation.
+A Linux VM or host with **4 vCPU, 11 GiB RAM, 2 GiB swap, 40 GB disk**. The reference setup is Ubuntu 26.04 LTS on VMware Workstation. Measured on it (ai-usage §3.19–§3.20): peak memory in use 7.7 GB over 24 h; at 10 GiB with **no swap** and three app environments the page cache was squeezed and the VM thrashed, so keep the swap file even with free RAM (zswap with `lz4` in front of it is optional: after a reboot it kept swapped pages compressed in RAM, with 3.6 MB written to disk in the 15 minutes measured).
 
 1. **Docker Engine** (not Docker Desktop):
    ```bash
@@ -199,3 +199,5 @@ CI **does not deploy** and holds no cluster credentials: Argo CD pulls from Git.
 - Application metrics cover only the frontend. Other services expose only probes and logs. OpenTelemetry tracing is supported upstream but not enabled.
 - CPU requests are lowered to fit two environments on 4 vCPU (`kind-sizing`). In production this would be a capacity-planning mistake ([architecture](docs/challenge/architecture.md#capacity)).
 - The kind node is capped at *vCPUs − 0.5* (3.5 on a 4-vCPU VM) so the host stays responsive; no cap with 2 vCPUs or fewer (`KIND_NODE_CPUS` overrides it, `0` disables the cap). The cluster gets less CPU in exchange ([runbook §2.11](docs/challenge/runbook.md#rb-host-cpu)).
+- After a VM reboot the kubelet restarts every pod at once: about 2 minutes of saturated CPU, and the Gateway needs `bootstrap.sh` again ([runbook §2.10](docs/challenge/runbook.md), §2.11).
+- Not done, for lack of time (future work): per-service CPU requests from measured usage instead of the blanket 20m of `kind-sizing`, and requests/limits for the platform charts; an explicit memory budget per component; a staggered start after a node restart; chart `0.1.1` of the Krateo composition (its `managed-by: krateo` label is overwritten by core-provider's Helm client); measuring the steady-state CPU use (~20% CPU pressure at rest, with no deploy or sync running).
