@@ -83,6 +83,14 @@ set_image_tag() { # set_image_tag <kustomization.yaml> <image name> <tag>
   rm -f "$tmp"
 }
 
+# True if the kind node has the image tag <name:tag> (Docker Hub short name,
+# e.g. boutique/frontend:1.1.0). grep >/dev/null, not grep -q: with pipefail,
+# -q exits early and the SIGPIPE fails the pipeline even on a match (§3.6).
+image_on_node() { # image_on_node <name:tag>
+  docker exec "${CLUSTER_NAME}-control-plane" crictl images -o json \
+    | grep "\"docker.io/$1\"" >/dev/null
+}
+
 # xDS port cloud-provider-kind listens on in its *current* run (it picks a
 # random port at every start). Logs are read only since the container's last
 # start: older runs' lines are still in "docker logs". If the line is missing

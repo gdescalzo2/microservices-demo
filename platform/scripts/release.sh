@@ -22,10 +22,7 @@ if [[ "${SKIP_BUILD:-0}" != "1" ]]; then
 else
   # Promotion: the image must already be on the kind node, or the rollout
   # would end in ImagePullBackOff (there is no registry to pull from).
-  # grep >/dev/null, not grep -q: with pipefail, -q exits early and the
-  # SIGPIPE fails the pipeline even on a match (ai-usage §3.6).
-  docker exec "${CLUSTER_NAME}-control-plane" crictl images -o json \
-    | grep "\"docker.io/boutique/frontend:${VERSION}\"" >/dev/null \
+  image_on_node "boutique/frontend:${VERSION}" \
     || die "boutique/frontend:${VERSION} is not on the kind node: build it first (build-frontend.sh ${VERSION})"
   ok "boutique/frontend:${VERSION} already on the kind node"
 fi
