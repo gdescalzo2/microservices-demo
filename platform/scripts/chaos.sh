@@ -22,6 +22,19 @@ if [[ "$ENV" == "prod" && "$SCENARIO" != "list" && "$SCENARIO" != "restore" ]]; 
   [[ "$ans" =~ ^[Yy]$ ]] || exit 0
 fi
 
+# Inject only once Argo CD has synced the latest commit on main. Otherwise an
+# auto-sync that lands after the injection re-applies Git and removes the
+# fault within seconds (seen for real in the demo dry run: step 7 pushes the
+# prod release, Argo CD picked it up ~90 s later, right after step 8 injected).
+if [[ "$SCENARIO" != "list" && "$SCENARIO" != "restore" ]]; then
+  need git
+  head="$(git -C "$REPO_ROOT" ls-remote origin refs/heads/main | cut -f1)"
+  [[ "$head" =~ ^[0-9a-f]{40}$ ]] || die "cannot read origin/main (got '$head')"
+  k -n argocd annotate application "boutique-$ENV" argocd.argoproj.io/refresh=normal --overwrite >/dev/null
+  wait_app_at_revision "boutique-$ENV" "$head" 300 \
+    || die "boutique-$ENV is not synced at origin/main ${head:0:8}: retry when it is"
+fi
+
 case "$SCENARIO" in
   list)
     cat <<'EOF'
