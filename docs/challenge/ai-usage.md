@@ -201,6 +201,12 @@ The next entries come from the **first real bootstrap** in the VM (Ubuntu 26.04,
 - An `EXIT=7` was reported without saying it was the last `curl`, which suggested `kubectl` had failed.
 - *Lesson*: report every exit code next to the command it belongs to, and verify that a started process actually exists before relying on its output.
 
+**3.23 Rebuilding a version silently changed what the tag meant.**
+- *What happened*: in the demo dry run, `build-frontend.sh 1.1.0` rebuilt an existing version. Every build step came from cache, so the binary was the same, but the image got a new ID (the `org.opencontainers.image.revision` label carries the current commit) and `kind load` re-pointed `boutique/frontend:1.1.0` on the node. dev kept running the old image; any recreated pod would have run the new one under the same version. The same had already happened to `1.0.0` that morning: `bootstrap.sh` calls `build-frontend.sh 1.0.0` on every run, and after the reboot prod and team-a-dev were running the rebuilt image.
+- *Fix*: the node tag `1.1.0` was pointed back to the image dev runs (`ctr images tag`). Copying that image back to the host's Docker failed (`ctr export`: `invalid checksum digest format`), so the host keeps the rebuilt one, same binary. `build-frontend.sh` now treats a version as immutable: tag already on the node → nothing is built or loaded; only in local Docker → loaded as is; `FORCE=1` rebuilds and reloads. The node check moved to `image_on_node` in `lib.sh`, shared with `release.sh`.
+- *Verification*: on the cluster, `build-frontend.sh 1.1.0` and `1.0.0` exit 0 without building and the node tag digests are unchanged; `FORCE=x` and version `1.1` are rejected. With fake `docker` and `kind` commands: on node → no build, no load; local only → load only; neither → build and load; `FORCE=1` → build and load. The first stub run reported a build in the "local only" case: the bug was in the fake `docker` (its last statement returned 1), not in the script.
+- *Lesson*: a tag that can be overwritten is not a version. Scripts that build or load images must refuse to replace an existing tag unless asked explicitly.
+
 ## 4. Troubleshooting case with AI
 
 Run on 2026-11-17 in the VM, with Claude Code operating the cluster directly (kubectl, Prometheus API), scenario `chaos.sh netpol-typo dev`.

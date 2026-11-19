@@ -107,7 +107,7 @@ A Linux VM or host with **4 vCPU, 11 GiB RAM, 2 GiB swap, 40 GB disk**. The refe
    echo -e "fs.inotify.max_user_watches=524288\nfs.inotify.max_user_instances=512" | sudo tee /etc/sysctl.d/99-kind.conf
    sudo sysctl --system
    ```
-3. **Utilities**: `sudo apt install -y git curl jq openssl`
+3. **Utilities**: `sudo apt install -y git curl jq openssl tree` (`tree` is used only in the demo)
 4. **CLIs** (kind, kubectl, helm, kustomize, kubeconform, argocd, k9s) in `~/.local/bin`, no sudo:
    ```bash
    platform/scripts/install-tools.sh
