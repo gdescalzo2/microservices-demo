@@ -25,7 +25,7 @@ labels:
 # whole "release" for Argo CD. Used by the rollout demo (1.0.0 -> 1.1.0).
 images:
   - name: boutique/frontend
-    newTag: 1.0.0
+    newTag: 1.2.0
   # Built from this fork (platform/scripts/build-image.sh): card declines
   # leave paymentservice and checkoutservice as a client-side error (gRPC
   # FAILED_PRECONDITION), so the frontend can answer 402 instead of 500.
