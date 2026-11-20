@@ -25,10 +25,12 @@ import (
 	"github.com/google/uuid"
 	"github.com/pkg/errors"
 	"github.com/sirupsen/logrus"
+	"google.golang.org/genproto/googleapis/rpc/errdetails"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/health"
+	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 
 	pb "github.com/GoogleCloudPlatform/microservices-demo/src/checkoutservice/genproto"
@@ -237,7 +239,7 @@ func (cs *checkoutService) PlaceOrder(ctx context.Context, req *pb.PlaceOrderReq
 
 	prep, err := cs.prepareOrderItemsAndShippingQuoteFromCart(ctx, req.UserId, req.UserCurrency, req.Address)
 	if err != nil {
-		return nil, status.Errorf(codes.Internal, err.Error())
+		return nil, status.Error(codes.Internal, err.Error())
 	}
 
 	total := pb.Money{CurrencyCode: req.UserCurrency,
@@ -251,7 +253,7 @@ func (cs *checkoutService) PlaceOrder(ctx context.Context, req *pb.PlaceOrderReq
 
 	txID, err := cs.chargeCard(ctx, &total, req.CreditCard)
 	if err != nil {
-		return nil, status.Errorf(codes.Internal, "failed to charge card: %+v", err)
+		return nil, chargeErrorStatus(err)
 	}
 	log.Infof("payment went through (transaction_id: %s)", txID)
 
@@ -366,14 +368,49 @@ func (cs *checkoutService) convertCurrency(ctx context.Context, from *pb.Money, 
 	return result, err
 }
 
+// cardDeclinedError is a payment refused by paymentservice for a business
+// reason (unsupported brand, invalid number, expired card): the request was
+// valid, the server did not fail.
+type cardDeclinedError struct {
+	reason  string // machine-readable, from the "decline-reason" metadata
+	message string // for the shopper, as written by paymentservice
+}
+
+func (e *cardDeclinedError) Error() string {
+	return fmt.Sprintf("card declined (%s): %s", e.reason, e.message)
+}
+
 func (cs *checkoutService) chargeCard(ctx context.Context, amount *pb.Money, paymentInfo *pb.CreditCardInfo) (string, error) {
+	var trailer metadata.MD
 	paymentResp, err := pb.NewPaymentServiceClient(cs.paymentSvcConn).Charge(ctx, &pb.ChargeRequest{
 		Amount:     amount,
-		CreditCard: paymentInfo})
+		CreditCard: paymentInfo}, grpc.Trailer(&trailer))
 	if err != nil {
+		if status.Code(err) == codes.FailedPrecondition {
+			if r := trailer.Get("decline-reason"); len(r) == 1 && r[0] != "" {
+				return "", &cardDeclinedError{reason: r[0], message: status.Convert(err).Message()}
+			}
+		}
 		return "", fmt.Errorf("could not charge the card: %+v", err)
 	}
 	return paymentResp.GetTransactionId(), nil
+}
+
+// chargeErrorStatus is the status PlaceOrder returns when chargeCard fails.
+func chargeErrorStatus(err error) error {
+	if d, ok := err.(*cardDeclinedError); ok {
+		// Keep the client-side nature of the error: FAILED_PRECONDITION
+		// plus google.rpc.ErrorInfo with the reason, so the frontend can
+		// answer 4xx without parsing text.
+		st, derr := status.New(codes.FailedPrecondition, d.message).WithDetails(&errdetails.ErrorInfo{
+			Reason: d.reason,
+			Domain: "paymentservice",
+		})
+		if derr == nil {
+			return st.Err()
+		}
+	}
+	return status.Errorf(codes.Internal, "failed to charge card: %+v", err)
 }
 
 func (cs *checkoutService) sendOrderConfirmation(ctx context.Context, email string, order *pb.OrderResult) error {
