@@ -51,8 +51,10 @@ if kind get clusters 2>/dev/null | grep -qx "$CLUSTER_NAME"; then
 else
   kind create cluster --config "$REPO_ROOT/platform/kind/cluster.yaml" --wait 120s
 fi
-# kind labels the control-plane node as excluded from load balancers; on a
-# single-node cluster that would leave the Gateway without backends.
+# A control-plane node labelled as excluded from external load balancers
+# would leave the Gateway without backends on a single-node cluster. kind
+# v0.33 does not set the label (checked on a fresh node, 2026-11-19): this
+# removes it only if present, e.g. with other kind versions.
 k label node "${CLUSTER_NAME}-control-plane" node.kubernetes.io/exclude-from-external-load-balancers- >/dev/null 2>&1 || true
 
 # Cap the node container at (vCPUs - 0.5): without a cap, pods can take every

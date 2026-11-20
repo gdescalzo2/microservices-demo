@@ -216,6 +216,12 @@ The next entries come from the **first real bootstrap** in the VM (Ubuntu 26.04,
 - *Open*: the prod frontend metrics showed sporadic `POST /cart/checkout` 500s with only the load generator as traffic. Prometheus places them, per pod, at 09:02, 09:33, 11:51 and 11:53 UTC: not during the reboot storm (11:23–11:29 UTC). The pods were replaced by the rollback before their logs were read, so the error text is lost and the cause is **not determined**. Next time: `kubectl logs ... | jq -cR 'fromjson? | select(.severity=="error")'` as soon as the counter moves.
 - *Lesson*: a demo script is only rehearsed when every command has been run, in order, on the real system: each step can change the state the next one depends on.
 
+**3.25 The first sync of prod on a fresh cluster failed, and a wait ended too early.**
+- *What happened*: in the step-by-step rebuild on 2026-11-19, `boutique-prod` failed its first sync after 5 retries. The frontend HPA had no sync-wave annotation, so it was applied in wave 0 with the data store, before its target existed: Argo CD reported it Degraded (`deployments.apps "frontend" not found`) and did not move to later waves. dev has no HPA and synced normally.
+- *Fix* (`1d04ad74`): the `staged-sync` component puts the HPA in wave 11, after the frontend (wave 10). Rendered: prod HPA in wave 11, PDB without a wave, dev unchanged. prod then synced at that commit: 13 pods, 0 restarts, HPA `cpu: 7%/80%`, 2 replicas.
+- *Agent error in the same run*: a `kubectl wait` for `health.status=Healthy` on dev returned while waves were still being applied. Health is aggregated over the resources already created, so it can read Healthy before the last wave exists. Now: wait for `.status.operationState.phase=Succeeded` with `syncResult.revision` equal to the expected commit, then for Healthy.
+- *Lesson*: a resource that refers to another one (HPA → Deployment) must be in a later wave than its target. And "Healthy" during a staged sync is a snapshot of what exists so far, not of the whole application.
+
 ## 4. Troubleshooting case with AI
 
 Run on 2026-11-17 in the VM, with Claude Code operating the cluster directly (kubectl, Prometheus API), scenario `chaos.sh netpol-typo dev`.
@@ -278,7 +284,7 @@ An honest list of what static validation cannot guarantee. Tick them during the 
 - [x] Krateo PoC: CDC permissions to create Applications in `argocd`: the instance's Helm release created the Application in `argocd` with no extra RBAC; instance Synced/Healthy, 12/12 pods, `/_healthz` 200 through the Gateway (§3.18, krateo.md §5)
 - [x] Memory usage: peak 7.7 GB in use (`MemTotal − MemAvailable`, Prometheus, 24 h including bootstraps and the Krateo instance), against the 6–7 GB estimate. Sizing and swap in §3.19–§3.20
 - [ ] Cause of the sporadic prod checkout 500s (§3.24): not determined
-- [ ] Real bootstrap duration **from scratch**: not re-measured. A rerun on an existing cluster (all steps idempotent, Gateway repaired) took under 4 minutes
+- [ ] Real bootstrap duration **from scratch**: not measured as a single run (the 2026-11-19 rebuild was done step by step, with pauses between commands). A rerun on the ready cluster, measured on 2026-11-20: 1 min 33 s, exit 0, no service pod recreated; the only side effects are new Helm revisions and the Kyverno `migrate-resources` hook job. The Kyverno upgrade prints five deprecation warnings for legacy Kyverno kinds the project does not use (§3.11); which component touches them was not verified
 
 ## 7. Value delivered and limits
 
