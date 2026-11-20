@@ -31,6 +31,9 @@ import (
 	"github.com/gorilla/mux"
 	"github.com/pkg/errors"
 	"github.com/sirupsen/logrus"
+	"google.golang.org/genproto/googleapis/rpc/errdetails"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 
 	pb "github.com/GoogleCloudPlatform/microservices-demo/src/frontend/genproto"
 	"github.com/GoogleCloudPlatform/microservices-demo/src/frontend/money"
@@ -369,6 +372,10 @@ func (fe *frontendServer) placeOrderHandler(w http.ResponseWriter, r *http.Reque
 				Country:       payload.Country},
 		})
 	if err != nil {
+		if reason, msg, ok := paymentDeclined(err); ok {
+			renderPaymentDeclined(log, r, w, reason, msg)
+			return
+		}
 		renderHTTPError(log, r, w, errors.Wrap(err, "failed to complete the order"), http.StatusInternalServerError)
 		return
 	}
@@ -545,6 +552,38 @@ func renderHTTPError(log logrus.FieldLogger, r *http.Request, w http.ResponseWri
 		"status":      http.StatusText(code),
 	})); templateErr != nil {
 		log.Println(templateErr)
+	}
+}
+
+// paymentDeclined reports whether a PlaceOrder error is a card declined by
+// paymentservice: FAILED_PRECONDITION with google.rpc.ErrorInfo from domain
+// "paymentservice" (set by checkoutservice). Anything else is a failure.
+func paymentDeclined(err error) (reason, msg string, ok bool) {
+	st := status.Convert(err)
+	if st.Code() != codes.FailedPrecondition {
+		return "", "", false
+	}
+	for _, d := range st.Details() {
+		if info, isInfo := d.(*errdetails.ErrorInfo); isInfo && info.GetDomain() == "paymentservice" && info.GetReason() != "" {
+			return info.GetReason(), st.Message(), true
+		}
+	}
+	return "", "", false
+}
+
+// renderPaymentDeclined answers 402 Payment Required: the request was valid
+// and the system worked, the payment was refused. The shopper sees only the
+// message written for them, not internal error chains.
+func renderPaymentDeclined(log logrus.FieldLogger, r *http.Request, w http.ResponseWriter, reason, msg string) {
+	log.WithField("decline_reason", reason).Warn("payment declined")
+	w.WriteHeader(http.StatusPaymentRequired)
+	if err := templates.ExecuteTemplate(w, "error", injectCommonTemplateData(r, map[string]interface{}{
+		"declined":    true,
+		"error":       msg,
+		"status_code": http.StatusPaymentRequired,
+		"status":      http.StatusText(http.StatusPaymentRequired),
+	})); err != nil {
+		log.Println(err)
 	}
 }
 

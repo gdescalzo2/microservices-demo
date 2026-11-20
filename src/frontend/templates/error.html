@@ -24,6 +24,11 @@
     <main role="main">
         <div class="py-5">
             <div class="container bg-light py-3 px-lg-5 py-lg-5">
+                {{ if .declined }}
+                <h1>Payment declined</h1>
+                <p>{{.error}}</p>
+                <p>Please use a different card.</p>
+                {{ else }}
                 <h1>Uh, oh!</h1>
                 <p>Something has failed. Below are some details for debugging.</p>
 
@@ -32,6 +37,7 @@
                     style="white-space: pre-wrap; word-break: keep-all;">
                     {{- .error -}}
                 </pre>
+                {{ end }}
             </div>
         </div>
     </main>
