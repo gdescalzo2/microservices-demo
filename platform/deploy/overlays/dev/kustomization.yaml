@@ -26,6 +26,16 @@ labels:
 images:
   - name: boutique/frontend
     newTag: 1.0.0
+  # Built from this fork (platform/scripts/build-image.sh): card declines
+  # leave paymentservice and checkoutservice as a client-side error (gRPC
+  # FAILED_PRECONDITION), so the frontend can answer 402 instead of 500.
+  # Introduced here first; prod gets the same entries when promoted.
+  - name: us-central1-docker.pkg.dev/online-boutique-ci/microservices-demo/paymentservice
+    newName: boutique/paymentservice
+    newTag: 1.0.0
+  - name: us-central1-docker.pkg.dev/online-boutique-ci/microservices-demo/checkoutservice
+    newName: boutique/checkoutservice
+    newTag: 1.0.0
 
 patches:
   # Strategic merge: env entries are matched by name (index-based JSON
