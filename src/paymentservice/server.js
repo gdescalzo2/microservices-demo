@@ -17,6 +17,7 @@ const grpc = require('@grpc/grpc-js');
 const protoLoader = require('@grpc/proto-loader');
 
 const charge = require('./charge');
+const { CreditCardError } = charge;
 
 const logger = require('./logger')
 
@@ -45,7 +46,15 @@ class HipsterShopServer {
       callback(null, response);
     } catch (err) {
       console.warn(err);
-      callback(err);
+      if (err instanceof CreditCardError) {
+        // Decline: FAILED_PRECONDITION + the reason as metadata, so that
+        // checkoutservice can tell it from a failure without parsing text.
+        const metadata = new grpc.Metadata();
+        metadata.set('decline-reason', err.reason);
+        callback({ code: err.code, details: err.message, metadata });
+      } else {
+        callback(err);
+      }
     }
   }
 

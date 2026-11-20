@@ -13,6 +13,7 @@
 // limitations under the License.
 
 const cardValidator = require('simple-card-validator');
+const grpc = require('@grpc/grpc-js');
 const { v4: uuidv4 } = require('uuid');
 const pino = require('pino');
 
@@ -28,27 +29,33 @@ const logger = pino({
 
 
 class CreditCardError extends Error {
-  constructor (message) {
+  constructor (message, reason) {
     super(message);
-    this.code = 400; // Invalid argument error
+    // A decline is a valid request refused by a business rule, not a server
+    // failure: gRPC FAILED_PRECONDITION. The upstream used 400, an HTTP
+    // status, which is not a valid gRPC code and reached clients as
+    // "Code(400)". The machine-readable reason travels as the
+    // "decline-reason" metadata (server.js).
+    this.code = grpc.status.FAILED_PRECONDITION;
+    this.reason = reason;
   }
 }
 
 class InvalidCreditCard extends CreditCardError {
   constructor (cardType) {
-    super(`Credit card info is invalid`);
+    super(`Credit card info is invalid`, 'invalid_number');
   }
 }
 
 class UnacceptedCreditCard extends CreditCardError {
   constructor (cardType) {
-    super(`Sorry, we cannot process ${cardType} credit cards. Only VISA or MasterCard is accepted.`);
+    super(`Sorry, we cannot process ${cardType} credit cards. Only VISA or MasterCard is accepted.`, 'unsupported_card_brand');
   }
 }
 
 class ExpiredCreditCard extends CreditCardError {
   constructor (number, month, year) {
-    super(`Your credit card (ending ${number.substr(-4)}) expired on ${month}/${year}`);
+    super(`Your credit card (ending ${number.substr(-4)}) expired on ${month}/${year}`, 'expired_card');
   }
 }
 
@@ -84,3 +91,5 @@ module.exports = function charge (request) {
 
   return { transaction_id: uuidv4() };
 };
+
+module.exports.CreditCardError = CreditCardError;
