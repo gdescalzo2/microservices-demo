@@ -94,7 +94,7 @@ docs/challenge/                       # challenge documentation
 
 ## 4. Prerequisites
 
-A Linux VM or host with **4 vCPU, 11 GiB RAM, 2 GiB swap, 40 GB disk**. The reference setup is Ubuntu 26.04 LTS on VMware Workstation. Measured on it (ai-usage §3.19–§3.20): peak memory in use 7.7 GB over 24 h; at 10 GiB with **no swap** and three app environments the page cache was squeezed and the VM thrashed, so keep the swap file even with free RAM (zswap with `lz4` in front of it is optional: after a reboot it kept swapped pages compressed in RAM, with 3.6 MB written to disk in the 15 minutes measured).
+A Linux VM or host with **4 vCPU, at least 10 GiB of usable memory (`MemTotal`; about 11 GiB of RAM, depending on what the kernel and crashdump reserve), 2 GiB swap, 40 GB disk**. The reference setup is Ubuntu 26.04 LTS on VMware Workstation. Measured on it (ai-usage §3.19–§3.20): peak memory in use 7.7 GB over 24 h; at 10 GiB with **no swap** and three app environments the page cache was squeezed and the VM thrashed, so keep the swap file even with free RAM (zswap with `lz4` in front of it is optional: after a reboot it kept swapped pages compressed in RAM, with 3.6 MB written to disk in the 15 minutes measured).
 
 1. **Docker Engine** (not Docker Desktop):
    ```bash

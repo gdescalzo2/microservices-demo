@@ -36,8 +36,13 @@ if (( inotify_watches < 524288 || inotify_instances < 512 )); then
 else
   ok "inotify limits"
 fi
-mem_gb="$(awk '/MemTotal/{printf "%d", $2/1024/1024}' /proc/meminfo)"
-(( mem_gb >= 8 )) || warn "only ${mem_gb} GB RAM: 10 GB recommended (two full environments + monitoring)"
+# Compared in MiB against MemTotal, which is below the RAM given to the VM
+# (the kernel keeps some at boot: 11 GiB assigned -> 10,900 MiB here).
+mem_mib="$(awk '/MemTotal/{printf "%d", $2/1024}' /proc/meminfo)"
+(( mem_mib >= 10240 )) || {
+  warn "only ${mem_mib} MiB of usable memory (MemTotal)"
+  warn "It is recommended to configure the system to provide at least 10 GiB of usable memory (MemTotal). Memory for crashdump and reserved by the kernel is not part of it, therefore, depending on the configuration of these latter, the system is recommended to have at least 11 GiB of RAM."
+}
 ok "repo tracked by Argo CD: $REPO"
 
 step "kind cluster '$CLUSTER_NAME'"
