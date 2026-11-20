@@ -24,7 +24,7 @@ Each step maps to one mandatory point of the challenge (§7).
 - every Argo CD app is `Synced/Healthy`;
 - no alerts in Prometheus `/alerts`;
 - the `boutique/frontend:1.3.0` image is **already built** (`build-frontend.sh 1.3.0`), if you want to skip the live build wait (a new version takes ~2.5 minutes). With the image already on the node, step 2 prints "already on the kind node" and builds nothing: a version is never rebuilt without `FORCE=1` (ai-usage §3.23);
-- dev and prod are on frontend `1.2.0` (`release.sh dev 1.2.0` if not). 1.2.0 is the version with card declines answered 402 (ai-usage §3.26); 1.3.0 is the same code under a new version, released live in step 7.
+- dev and prod are on frontend `1.2.1` (`release.sh dev 1.2.1` if not): card declines answered 402 (1.2.0, ai-usage §3.26) plus the deployment-details race fix (1.2.1). 1.3.0 is the same code under a new version, released live in step 7.
 
 ---
 
@@ -102,7 +102,7 @@ curl -sI http://dev.boutique.local/ | grep -i x-app-version     # 1.3.0
 SKIP_BUILD=1 platform/scripts/release.sh prod 1.3.0             # promote the same image
 ```
 
-Grafana: the "Frontend version(s) running" panel shows 1.2.0 and 1.3.0 side by side for a few seconds, then only 1.3.0. Argo CD: the app History with the commit SHA.
+Grafana: the "Frontend version(s) running" panel shows 1.2.1 and 1.3.0 side by side for a few seconds, then only 1.3.0. Argo CD: the app History with the commit SHA.
 
 ### 8. Failure scenario and troubleshooting (8 min)
 
@@ -135,7 +135,7 @@ Self-heal bonus: run `chaos.sh bad-image prod`. Argo CD puts the right image bac
 
 ```bash
 platform/scripts/rollback.sh prod              # git revert of the 1.3.0 release -> sync -> rollout
-curl -sI http://boutique.local/ | grep -i x-app-version     # 1.2.0
+curl -sI http://boutique.local/ | grep -i x-app-version     # 1.2.1
 git log --oneline -3
 ```
 
@@ -161,4 +161,4 @@ Besides step 8.6, show [ai-usage.md §3](ai-usage.md#3-ai-mistakes-caught-by-ver
 
 ---
 
-**After the demo**: run `platform/scripts/release.sh dev 1.2.0` to bring dev back to its initial state, if you need to repeat the demo.
+**After the demo**: run `platform/scripts/release.sh dev 1.2.1` to bring dev back to its initial state, if you need to repeat the demo.
