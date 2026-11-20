@@ -32,7 +32,7 @@ images:
   # Introduced here first; prod gets the same entries when promoted.
   - name: us-central1-docker.pkg.dev/online-boutique-ci/microservices-demo/paymentservice
     newName: boutique/paymentservice
-    newTag: 1.0.0
+    newTag: 1.0.1
   - name: us-central1-docker.pkg.dev/online-boutique-ci/microservices-demo/checkoutservice
     newName: boutique/checkoutservice
     newTag: 1.0.0
