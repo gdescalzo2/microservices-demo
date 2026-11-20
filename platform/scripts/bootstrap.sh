@@ -2,12 +2,12 @@
 # One-shot, idempotent setup of the whole local platform:
 #   kind cluster -> cloud-provider-kind (LoadBalancer + Gateway API)
 #   -> metrics-server, kube-prometheus-stack, Kyverno, Argo CD (Helm)
-#   -> frontend image build + side-load -> Redis secrets
+#   -> build + side-load of our images (boutique/*) -> Redis secrets
 #   -> Argo CD projects/applications (from then on, Git drives everything).
 #
 # Usage:   platform/scripts/bootstrap.sh
 # Env:     GIT_REPO_URL  repo Argo CD will track (default: git remote "origin")
-#          SKIP_BUILD=1  do not build the frontend image
+#          SKIP_BUILD=1  do not build our images (boutique/*)
 #          KIND_NODE_CPUS  CPU cap for the kind node container (0..vCPUs, at most one decimal; default vCPUs - 0.5, no cap with <= 2 vCPUs; 0 = no cap)
 # Re-running is safe: every step checks what already exists.
 # shellcheck source=lib.sh
@@ -171,11 +171,21 @@ ok "kyverno"
   -f "$VALUES/argocd.yaml" --version "$ARGOCD_VERSION" >/dev/null
 ok "argo-cd"
 
-step "Frontend image (our fork, with /metrics)"
+step "Images built from this fork (every boutique/* image the overlays declare)"
+# Read from the rendered overlays, not hard-coded: a version written here
+# went stale as soon as an overlay moved on (the frontend was released to
+# 1.2.0 while this step still built 1.0.0), and on a fresh node every image
+# the overlays name must exist, or its pods stay in ImagePullBackOff (there
+# is no registry). build-image.sh skips the versions already on the node.
 if [[ "${SKIP_BUILD:-0}" == "1" ]]; then
   warn "SKIP_BUILD=1: not building"
 else
-  "$REPO_ROOT/platform/scripts/build-frontend.sh" 1.0.0
+  images="$(for env in "${ENVS[@]}"; do k kustomize "$REPO_ROOT/platform/deploy/overlays/$env"; done \
+    | sed -n 's|^ *image: boutique/\([a-z]*\):\([0-9][0-9.]*\)$|\1 \2|p' | sort -u)"
+  [[ -n "$images" ]] || die "no boutique/* image found in the overlays"
+  while read -r svc ver; do
+    "$REPO_ROOT/platform/scripts/build-image.sh" "$svc" "$ver"
+  done <<<"$images"
 fi
 
 step "Secrets (generated here, never committed)"
