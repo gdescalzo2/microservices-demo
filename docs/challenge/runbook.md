@@ -115,6 +115,14 @@ count by (version) (boutique_frontend_build_info{namespace="boutique-prod"})
 
 Checkout calls cart, catalog, currency, shipping and payment. Email and cart-emptying errors are tolerated.
 
+**A refused card is not a failure.** Since frontend 1.2.0 a card declined by paymentservice (unsupported brand, invalid number, expired) is answered **402** and logged at `warning` as `payment declined` with a `decline_reason`; the alert counts only 5xx, so declines do not fire it. The load generator produces a few by itself (~0.6% of its orders: random "VISA" numbers that are Visa Electron). Before that version they surfaced as 500s and fired this alert with no fault (ai-usage §3.26). `code="402"` in `boutique_frontend_http_requests_total` shows how many.
+
+```bash
+k -n $NS logs deploy/frontend --since=1h | jq -cR 'fromjson? | select(.message=="payment declined") | .decline_reason' | sort | uniq -c
+```
+
+A slow failure can reach the shopper as **504** from the Gateway rather than 500 from the frontend: Envoy stops waiting before the frontend's call times out (seen with `netpol-typo`, first order after the fault). The frontend log still has the error.
+
 Start from the **frontend** log: checkoutservice returns the error to its caller and does not log it, so its own log shows only `[PlaceOrder]` lines.
 
 ```bash

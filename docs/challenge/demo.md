@@ -23,8 +23,8 @@ Each step maps to one mandatory point of the challenge (§7).
 - `smoke-test.sh dev && smoke-test.sh prod` pass;
 - every Argo CD app is `Synced/Healthy`;
 - no alerts in Prometheus `/alerts`;
-- the `boutique/frontend:1.1.0` image is **already built** (`build-frontend.sh 1.1.0`), if you want to skip the live build wait (a new version takes ~2.5 minutes). With the image already on the node, step 2 prints "already on the kind node" and builds nothing: a version is never rebuilt without `FORCE=1` (ai-usage §3.23);
-- dev is on `1.0.0` (`release.sh dev 1.0.0` if not).
+- the `boutique/frontend:1.3.0` image is **already built** (`build-frontend.sh 1.3.0`), if you want to skip the live build wait (a new version takes ~2.5 minutes). With the image already on the node, step 2 prints "already on the kind node" and builds nothing: a version is never rebuilt without `FORCE=1` (ai-usage §3.23);
+- dev and prod are on frontend `1.2.0` (`release.sh dev 1.2.0` if not). 1.2.0 is the version with card declines answered 402 (ai-usage §3.26); 1.3.0 is the same code under a new version, released live in step 7.
 
 ---
 
@@ -33,7 +33,7 @@ Each step maps to one mandatory point of the challenge (§7).
 ```bash
 git clone https://github.com/<user>/microservices-demo.git && cd microservices-demo
 tree -L 3 platform docs/challenge
-git diff --stat c7cb6d5b..HEAD -- src/    # c7cb6d5b = last upstream commit before the fork; code changes: 4 frontend files
+git diff --stat c7cb6d5b..HEAD -- src/    # c7cb6d5b = last upstream commit before the fork; code changes: frontend, checkoutservice, paymentservice
 ```
 
 Message: *"I did not rewrite the app. I reused the upstream Kustomize and added a platform layer on top."* Show `platform/deploy/base/kustomization.yaml`: the upstream base, the upstream NetworkPolicy component, the patches.
@@ -42,11 +42,11 @@ Message: *"I did not rewrite the app. I reused the upstream Kustomize and added 
 
 ```bash
 sed -n '/Challenge/,/^}/p' src/frontend/main.go          # what changed in the code
-platform/scripts/build-frontend.sh 1.1.0                  # docker build + kind load (nothing if already on the node)
+platform/scripts/build-frontend.sh 1.3.0                  # docker build + kind load (nothing if already on the node)
 docker run --rm -d --name demo-frontend -p 18080:8080 -p 19090:9090 -e PORT=8080 \
   -e PRODUCT_CATALOG_SERVICE_ADDR=x:1 -e CURRENCY_SERVICE_ADDR=x:1 -e CART_SERVICE_ADDR=x:1 \
   -e RECOMMENDATION_SERVICE_ADDR=x:1 -e SHIPPING_SERVICE_ADDR=x:1 -e CHECKOUT_SERVICE_ADDR=x:1 \
-  -e AD_SERVICE_ADDR=x:1 -e SHOPPING_ASSISTANT_SERVICE_ADDR=x:1 boutique/frontend:1.1.0
+  -e AD_SERVICE_ADDR=x:1 -e SHOPPING_ASSISTANT_SERVICE_ADDR=x:1 boutique/frontend:1.3.0
 sleep 2; curl -s localhost:18080/_healthz; curl -s localhost:19090/metrics | grep build_info; docker stop demo-frontend
 ```
 
@@ -96,13 +96,13 @@ Grafana, dashboard with environment `boutique-prod`: requests by route, p95 late
 ### 7. Update and rollout (5 min)
 
 ```bash
-platform/scripts/release.sh dev 1.1.0           # commit + push + sync + rollout
+platform/scripts/release.sh dev 1.3.0           # commit + push + sync + rollout
 # T2: a new pod is ready before the old one is removed (maxUnavailable 0)
-curl -sI http://dev.boutique.local/ | grep -i x-app-version     # 1.1.0
-SKIP_BUILD=1 platform/scripts/release.sh prod 1.1.0             # promote the same image
+curl -sI http://dev.boutique.local/ | grep -i x-app-version     # 1.3.0
+SKIP_BUILD=1 platform/scripts/release.sh prod 1.3.0             # promote the same image
 ```
 
-Grafana: the "Frontend version(s) running" panel shows 1.0.0 and 1.1.0 side by side for a few seconds, then only 1.1.0. Argo CD: the app History with the commit SHA.
+Grafana: the "Frontend version(s) running" panel shows 1.2.0 and 1.3.0 side by side for a few seconds, then only 1.3.0. Argo CD: the app History with the commit SHA.
 
 ### 8. Failure scenario and troubleshooting (8 min)
 
@@ -134,8 +134,8 @@ Self-heal bonus: run `chaos.sh bad-image prod`. Argo CD puts the right image bac
 ### 9. Rollback (4 min)
 
 ```bash
-platform/scripts/rollback.sh prod              # git revert of the 1.1.0 release -> sync -> rollout
-curl -sI http://boutique.local/ | grep -i x-app-version     # 1.0.0
+platform/scripts/rollback.sh prod              # git revert of the 1.3.0 release -> sync -> rollout
+curl -sI http://boutique.local/ | grep -i x-app-version     # 1.2.0
 git log --oneline -3
 ```
 
@@ -157,8 +157,8 @@ Message: *"The golden path already exists: it is my overlays. Krateo turns them 
 
 ### 11. A concrete example of AI use (3 min)
 
-Besides step 8.6, show [ai-usage.md §3](ai-usage.md#3-ai-mistakes-caught-by-verification). The best story to tell is the **JSON patch with the wrong index**: `kustomize build` passed, but the patch changed `RATE` instead of `USERS`. It only surfaced by reading the rendered output.
+Besides step 8.6, show [ai-usage.md §3](ai-usage.md#3-ai-mistakes-caught-by-verification). The best story to tell is the **JSON patch with the wrong index**: `kustomize build` passed, but the patch changed `RATE` instead of `USERS`. It only surfaced by reading the rendered output. A second, longer story: the sporadic checkout 500s (ai-usage §3.26), diagnosed from the logs to card declines reported as server errors, and the fix across three services; the operator corrected the agent on where the defect was, and an AI-sourced claim (Stripe's `card_not_supported`) did not match the primary source.
 
 ---
 
-**After the demo**: run `platform/scripts/release.sh dev 1.0.0` to bring dev back to its initial state, if you need to repeat the demo.
+**After the demo**: run `platform/scripts/release.sh dev 1.2.0` to bring dev back to its initial state, if you need to repeat the demo.
