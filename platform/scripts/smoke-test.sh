@@ -40,6 +40,21 @@ t_home()     { [[ "$(c -o /dev/null -w '%{http_code}' "$BASE/")" == 200 ]]; }
 t_product()  { [[ "$(c -o /dev/null -w '%{http_code}' "$BASE/product/$PRODUCT")" == 200 ]]; }
 t_add()      { [[ "$(c -o /dev/null -w '%{http_code}' -d product_id="$PRODUCT" -d quantity=1 "$BASE/cart")" =~ ^(200|302)$ ]]; }
 t_cart()     { c "$BASE/cart" | grep -i sunglasses >/dev/null; }
+# A card the payment service refuses (Visa Electron, unsupported brand) must
+# be answered 402 with the shopper message, not 500 (ai-usage §3.26). The
+# order fails, so the cart keeps its item for the valid checkout below.
+t_declined() {
+  local body code
+  body="$(mktemp)"
+  code="$(c -o "$body" -w '%{http_code}' -d email=someone@example.com -d street_address='1600 Amphitheatre Parkway' \
+    -d zip_code=94043 -d city='Mountain View' -d state=CA -d country='United States' \
+    -d credit_card_number=4917300800000000 -d credit_card_expiration_month=1 \
+    -d credit_card_expiration_year=2039 -d credit_card_cvv=672 "$BASE/cart/checkout")"
+  [[ "$code" == 402 ]] && grep 'Payment declined' "$body" >/dev/null && ! grep 'rpc error' "$body" >/dev/null
+  local rc=$?
+  rm -f "$body"
+  return "$rc"
+}
 t_checkout() {
   c -L -d email=someone@example.com -d street_address='1600 Amphitheatre Parkway' -d zip_code=94043 \
     -d city='Mountain View' -d state=CA -d country='United States' \
@@ -54,6 +69,7 @@ check "GET / -> 200"                            t_home
 check "GET /product/$PRODUCT -> 200"            t_product
 check "POST /cart (add item)"                   t_add
 check "GET /cart shows the item"                t_cart
+check "POST /cart/checkout, declined card -> 402" t_declined
 check "POST /cart/checkout -> order complete"   t_checkout
 
 VERSION="$(c -I "$BASE/" | awk -F': ' 'tolower($1)=="x-app-version"{print $2}' | tr -d '\r')"
