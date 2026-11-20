@@ -26,6 +26,16 @@ labels:
 images:
   - name: boutique/frontend
     newTag: 1.0.0
+  # Built from this fork (platform/scripts/build-image.sh): card declines
+  # leave paymentservice and checkoutservice as a client-side error (gRPC
+  # FAILED_PRECONDITION), so the frontend can answer 402 instead of 500.
+  # Promoted from dev after the end-to-end check there.
+  - name: us-central1-docker.pkg.dev/online-boutique-ci/microservices-demo/paymentservice
+    newName: boutique/paymentservice
+    newTag: 1.0.0
+  - name: us-central1-docker.pkg.dev/online-boutique-ci/microservices-demo/checkoutservice
+    newName: boutique/checkoutservice
+    newTag: 1.0.0
 
 # No "replicas:" for the frontend on purpose: the HPA owns the replica count
 # (minReplicas: 2). Declaring it here too would make Argo CD and the HPA fight.
