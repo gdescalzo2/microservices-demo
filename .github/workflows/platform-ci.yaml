@@ -126,7 +126,7 @@ jobs:
       # reformat (spaces around "+"): only files written for the challenge
       # are checked, so the diff from upstream stays small.
       - name: gofmt (files written for the challenge)
-        run: test -z "$(gofmt -l metrics.go metrics_test.go main.go checkout_test.go)"
+        run: test -z "$(gofmt -l metrics.go metrics_test.go main.go checkout_test.go deployment_details.go)"
       # copylocks is disabled because of pre-existing upstream findings
       # (genproto.Money passed by value in handlers.go and money/), not in
       # code changed by the challenge. Fixing them would widen the diff from
