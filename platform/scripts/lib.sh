@@ -34,6 +34,20 @@ k() { kubectl --context "$KUBE_CONTEXT" "$@"; }
 
 ns_for() { echo "boutique-$1"; }
 
+# Services whose image is built from this fork (build-image.sh), and the
+# "name:" of their entry in the overlays' images list. The frontend is
+# renamed to boutique/frontend in the base, so overlays key it by that name;
+# checkoutservice and paymentservice are renamed in each overlay (dev first,
+# then prod), so their entry is keyed by the upstream image name.
+OWN_SERVICES=(frontend checkoutservice paymentservice)
+image_key_for() { # image_key_for <service>
+  case "$1" in
+    frontend) echo "boutique/frontend" ;;
+    checkoutservice|paymentservice) echo "us-central1-docker.pkg.dev/online-boutique-ci/microservices-demo/$1" ;;
+    *) die "not a service built from this fork: '$1' (use ${OWN_SERVICES[*]})" ;;
+  esac
+}
+
 host_for() {
   case "$1" in
     dev)  echo "dev.boutique.local" ;;
@@ -236,6 +250,28 @@ verify_frontend() { # verify_frontend <env> <version>
     | awk -F': ' 'tolower($1)=="x-app-version"{print $2}' | tr -d '\r' || true)"
   [[ "$header" == "$version" ]] || { warn "X-App-Version is '${header:-none}', expected ${version}"; return 1; }
   ok "$env frontend on ${version}: Deployment, all running pods, X-App-Version"
+}
+
+# Fails unless deploy/<service> of <env> runs boutique/<service>:<version>:
+# Deployment image, rollout complete, every running pod on that image. For
+# the frontend use verify_frontend, which also checks X-App-Version.
+verify_service() { # verify_service <env> <service> <version>
+  local env="$1" svc="$2" version="$3" ns img spec_image counts total bad
+  ns="$(ns_for "$env")"; img="boutique/${svc}:${version}"
+  spec_image="$(k -n "$ns" get deploy "$svc" -o jsonpath='{.spec.template.spec.containers[0].image}')"
+  [[ "$spec_image" == "$img" ]] || { warn "Deployment $svc image is '$spec_image', expected $img"; return 1; }
+  k -n "$ns" rollout status "deploy/$svc" --timeout=300s || return 1
+  counts="$(k -n "$ns" get pods -l "app=$svc" -o json | jq --arg img "$img" -r \
+    '[.items[] | select(.status.phase=="Running" and .metadata.deletionTimestamp==null)]
+     | "\(length) \(map(select(.spec.containers[0].image != $img)) | length)"')"
+  read -r total bad <<<"$counts"
+  (( total > 0 && bad == 0 )) || { warn "$svc pods: ${total} running, ${bad} not on ${version}"; return 1; }
+  ok "$env $svc on ${version}: Deployment, all running pods"
+}
+
+# verify_frontend or verify_service, whichever fits <service>.
+verify_own_service() { # verify_own_service <env> <service> <version>
+  if [[ "$2" == "frontend" ]]; then verify_frontend "$1" "$3"; else verify_service "$1" "$2" "$3"; fi
 }
 
 wait_app_healthy() {

@@ -8,23 +8,28 @@
 #                      auto-sync is suspended first; you MUST then fix Git and
 #                      re-enable it (the script prints how).
 #
-# Usage: platform/scripts/rollback.sh <dev|prod> [--emergency]
+# Usage: platform/scripts/rollback.sh <dev|prod> [--emergency [service]]
+#   service (emergency only): frontend (default), checkoutservice or
+#   paymentservice. The GitOps path reverts whatever the last overlay commit
+#   changed and checks every service built from this fork.
 # shellcheck source=lib.sh
 source "$(dirname "$0")/lib.sh"
 need git kubectl kustomize curl jq
 
-ENV="${1:?usage: $0 <dev|prod> [--emergency]}"; MODE="${2:-gitops}"
+ENV="${1:?usage: $0 <dev|prod> [--emergency [service]]}"; MODE="${2:-gitops}"
 NS="$(ns_for "$ENV")"; APP="boutique-$ENV"; OVERLAY="platform/deploy/overlays/$ENV"
 
 if [[ "$MODE" == "--emergency" ]]; then
-  step "[$NS] EMERGENCY rollback with kubectl"
+  SERVICE="${3:-frontend}"
+  image_key_for "$SERVICE" >/dev/null   # validates the name
+  step "[$NS] EMERGENCY rollback of $SERVICE with kubectl"
   if [[ "$ENV" == "prod" ]]; then
     warn "suspending Argo CD auto-sync for $APP (otherwise self-heal reverts the undo)"
     k -n argocd patch application "$APP" --type json -p '[{"op":"remove","path":"/spec/syncPolicy/automated"}]'
   fi
-  k -n "$NS" rollout history deploy/frontend
-  k -n "$NS" rollout undo deploy/frontend
-  k -n "$NS" rollout status deploy/frontend --timeout=300s
+  k -n "$NS" rollout history "deploy/$SERVICE"
+  k -n "$NS" rollout undo "deploy/$SERVICE"
+  k -n "$NS" rollout status "deploy/$SERVICE" --timeout=300s
   ok "running the previous ReplicaSet again"
   warn "Git no longer matches the cluster. To close the incident:"
   echo "    1. platform/scripts/rollback.sh $ENV            # revert the bad commit in Git"
@@ -44,14 +49,18 @@ git -C "$REPO_ROOT" revert --no-edit "$BAD"
 git -C "$REPO_ROOT" push
 SHA="$(git -C "$REPO_ROOT" rev-parse HEAD)"
 ok "pushed revert ${SHA:0:8}"
-# The version the overlay declares after the revert is what must be running.
-EXPECTED="$(kustomize build "$REPO_ROOT/$OVERLAY" | awk '/image: boutique\/frontend:/{sub(/.*:/,"",$2); print $2; exit}')"
-[[ -n "$EXPECTED" ]] || die "cannot read the frontend tag from $OVERLAY after the revert"
-echo "    expected frontend version after rollback: $EXPECTED"
+# What the overlay declares after the revert is what must be running: every
+# boutique/* image (our services), whichever one the reverted commit changed.
+EXPECTED="$(kustomize build "$REPO_ROOT/$OVERLAY" | sed -n 's|^ *image: boutique/\([a-z]*\):\([0-9][0-9.]*\)$|\1 \2|p' | sort -u)"
+[[ -n "$EXPECTED" ]] || die "cannot read the boutique/* images from $OVERLAY after the revert"
+echo "    expected after rollback:"
+while read -r svc ver; do echo "      boutique/$svc:$ver"; done <<<"$EXPECTED"
 
 step "Argo CD sync + rollout"
 argocd_sync "$APP" "$SHA"
 # 600s covers the sync retry backoff (see platform/gitops/applications.yaml).
 wait_app_at_revision "$APP" "$SHA" 600 || die "Argo CD did not reach ${SHA:0:8}"
-verify_frontend "$ENV" "$EXPECTED" || die "rollback not verified"
-k -n "$NS" get pods -l app=frontend -o custom-columns='POD:.metadata.name,IMAGE:.spec.containers[0].image'
+while read -r svc ver; do
+  verify_own_service "$ENV" "$svc" "$ver" || die "rollback not verified ($svc)"
+done <<<"$EXPECTED"
+k -n "$NS" get pods -l 'app in (frontend,checkoutservice,paymentservice)' -o custom-columns='POD:.metadata.name,IMAGE:.spec.containers[0].image'
