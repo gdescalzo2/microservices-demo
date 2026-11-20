@@ -3,8 +3,10 @@
 #   validate  -> lint scripts/YAML, render every Kustomize overlay and the
 #                Krateo chart, validate against Kubernetes + CRD schemas,
 #                guard against Secrets committed to Git
-#   frontend  -> go vet / go test / gofmt on the forked frontend
-#   image     -> build the frontend image, scan it (Trivy, blocking on
+#   frontend, checkoutservice, paymentservice
+#             -> tests of the services built from this fork (Go: gofmt on
+#                the files we own, go vet, go test; Node: node --test)
+#   image     -> build each of those images, scan it (Trivy, blocking on
 #                fixable CRITICAL CVEs), push to GHCR on main only
 #
 # Deploy is NOT done here: Argo CD pulls from Git (GitOps). CI never holds
@@ -21,12 +23,16 @@ on:
     paths:
       - "platform/**"
       - "src/frontend/**"
+      - "src/checkoutservice/**"
+      - "src/paymentservice/**"
       - "kustomize/**"
       - ".github/workflows/platform-ci.yaml"
   pull_request:
     paths:
       - "platform/**"
       - "src/frontend/**"
+      - "src/checkoutservice/**"
+      - "src/paymentservice/**"
       - "kustomize/**"
       - ".github/workflows/platform-ci.yaml"
   workflow_dispatch:
@@ -116,8 +122,11 @@ jobs:
         with:
           go-version-file: src/frontend/go.mod
           cache-dependency-path: src/frontend/go.sum
-      - name: gofmt (files changed by the challenge)
-        run: test -z "$(gofmt -l metrics.go metrics_test.go main.go)"
+      # handlers.go and middleware.go are upstream files that gofmt would
+      # reformat (spaces around "+"): only files written for the challenge
+      # are checked, so the diff from upstream stays small.
+      - name: gofmt (files written for the challenge)
+        run: test -z "$(gofmt -l metrics.go metrics_test.go main.go checkout_test.go)"
       # copylocks is disabled because of pre-existing upstream findings
       # (genproto.Money passed by value in handlers.go and money/), not in
       # code changed by the challenge. Fixing them would widen the diff from
@@ -125,12 +134,47 @@ jobs:
       - run: go vet -copylocks=false ./...
       - run: go test -race -count=1 ./...
 
+  checkoutservice:
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: src/checkoutservice
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: src/checkoutservice/go.mod
+          cache-dependency-path: src/checkoutservice/go.sum
+      - name: gofmt (files changed by the challenge)
+        run: test -z "$(gofmt -l main.go charge_test.go)"
+      # Same upstream copylocks findings as the frontend (money/).
+      - run: go vet -copylocks=false ./...
+      - run: go test -race -count=1 ./...
+
+  paymentservice:
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: src/paymentservice
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      # The Node version comes from the service image (node:24 in the
+      # Dockerfile), installed in a container rather than with another action.
+      - name: node --test in the image's Node version
+        run: |
+          docker run --rm -v "$PWD:/src:ro" node:24.20.0-alpine@sha256:e67514e5d0f6c46656005e1b693b2ec9d52e80b641307de684d4a015ba7a4eaf \
+            sh -c 'cp -r /src /app && cd /app && npm install --ignore-scripts --no-audit --no-fund && npm test'
+
   image:
-    needs: [validate, frontend]
+    needs: [validate, frontend, checkoutservice, paymentservice]
     runs-on: ubuntu-24.04
     permissions:
       contents: read
       packages: write
+    strategy:
+      fail-fast: false
+      matrix:
+        service: [frontend, checkoutservice, paymentservice]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -138,15 +182,17 @@ jobs:
         id: meta
         run: |
           owner="${GITHUB_REPOSITORY_OWNER,,}"
-          echo "image=ghcr.io/${owner}/boutique-frontend" >> "$GITHUB_OUTPUT"
+          echo "image=ghcr.io/${owner}/boutique-${{ matrix.service }}" >> "$GITHUB_OUTPUT"
           echo "version=0.0.0-sha.${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
 
       - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
 
+      # APP_VERSION is used by the frontend Dockerfile only; the others ignore
+      # it (BuildKit notes an unused build-arg, no failure).
       - name: Build (load locally for scanning)
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
-          context: src/frontend
+          context: src/${{ matrix.service }}
           load: true
           push: false
           build-args: APP_VERSION=${{ steps.meta.outputs.version }}
@@ -154,8 +200,9 @@ jobs:
           labels: |
             org.opencontainers.image.revision=${{ github.sha }}
             org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          # One cache scope per service: the matrix jobs would overwrite a shared one.
+          cache-from: type=gha,scope=${{ matrix.service }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.service }}
 
       - name: Trivy scan (blocking on fixable CRITICAL)
         uses: aquasecurity/trivy-action@57a97c7e7821a5776cebc9bb87c984fa69cba8f1 # v0.35.0
