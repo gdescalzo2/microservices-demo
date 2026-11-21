@@ -37,6 +37,20 @@ images:
     newName: boutique/checkoutservice
     newTag: 1.0.0
 
+# Non-secret, per-environment settings of the load generator. Kustomize
+# appends a hash of the content to the name: changing a value renames the
+# ConfigMap, so the Deployment rolls out by itself (no manual restart).
+configMapGenerator:
+  - name: loadgenerator-config
+    literals:
+      - USERS=5
+    # The base labels do not reach resources generated here: same set, by hand.
+    options:
+      labels:
+        app.kubernetes.io/part-of: online-boutique
+        app.kubernetes.io/managed-by: argocd
+        platform.example.com/owner: team-boutique
+
 # No "replicas:" for the frontend on purpose: the HPA owns the replica count
 # (minReplicas: 2). Declaring it here too would make Argo CD and the HPA fight.
 
@@ -52,6 +66,7 @@ patches:
         value: 100m
   # Strategic merge: env entries are matched by name (index-based JSON
   # patches silently hit the wrong variable if upstream reorders env).
+  # value: null drops the upstream literal, so only valueFrom is left.
   - patch: |-
       apiVersion: apps/v1
       kind: Deployment
@@ -64,4 +79,8 @@ patches:
               - name: main
                 env:
                   - name: USERS
-                    value: "5"
+                    value: null
+                    valueFrom:
+                      configMapKeyRef:
+                        name: loadgenerator-config
+                        key: USERS
