@@ -211,7 +211,9 @@ Memory estimate in the VM:
 | Argo CD | ~0.4 GB |
 | Kyverno | ~0.4 GB |
 | kind node + system | ~1.5 GB |
-| **Total** | **6–7 GB out of 10** |
+| **Total** | **6–7 GB estimated** |
+
+Measured: peak **7.7 GB** in use (`MemTotal − MemAvailable`, Prometheus, 24 h including bootstraps and the Krateo instance) out of a `MemTotal` of about 10.6 GiB, plus 2 GiB of swap (ai-usage §3.19–§3.20 and §6).
 
 ## 6. OpenShift (note)
 
