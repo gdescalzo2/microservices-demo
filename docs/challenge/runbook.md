@@ -306,7 +306,7 @@ cat /proc/pressure/memory /proc/pressure/io            # "some avg10" well above
 grep -E '^(workingset_refault_file|pswpin|pswpout|zswpwb)' /proc/vmstat   # run twice 10 s apart: the delta is the rate
 ```
 
-Thousands of `workingset_refault_file` per second mean the kernel keeps dropping and re-reading files it still needs (executables, libraries): page cache thrashing. Seen for real at ~83,000/s with no swap (ai-usage §3.19). With a swap file, rarely used anonymous memory can leave RAM instead.
+Thousands of `workingset_refault_file` per second mean the kernel keeps dropping and re-reading files it still needs (executables, libraries): page cache thrashing. Seen for real at ~83,000/s with no swap (ai-usage §3.19). With swap (zram on the reference VM), rarely used anonymous memory can leave RAM instead.
 
 **After a VM reboot** the kubelet restarts every pod at once (the sync waves of `staged-sync` apply to Argo CD syncs, not to a node restart). Measured with 4 vCPU and the 3.5 cap (boot at 12:23): load 82 at 12:25, CPU pressure ~78% until 12:29, load below 10 from 12:32, memory pressure below 1% throughout. Wait for it to settle, then rerun `bootstrap.sh` for the Gateway (§2.10). Two things that look alarming after a reboot and are not:
 

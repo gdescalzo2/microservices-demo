@@ -213,7 +213,7 @@ Memory estimate in the VM:
 | kind node + system | ~1.5 GB |
 | **Total** | **6–7 GB estimated** |
 
-Measured: peak **7.7 GB** in use (`MemTotal − MemAvailable`, Prometheus, 24 h including bootstraps and the Krateo instance) out of a `MemTotal` of about 10.6 GiB, plus 2 GiB of swap (ai-usage §3.19–§3.20 and §6).
+Measured: peak **7.7 GB** in use (`MemTotal − MemAvailable`, Prometheus, 24 h including bootstraps and the Krateo instance) out of a `MemTotal` of about 10.6 GiB, plus swap (a 2 GiB file then, 3.4 GiB of zram capped at 1 GiB of RAM since 2026-11-21; ai-usage §3.19–§3.20 and §6).
 
 ## 6. OpenShift (note)
 
