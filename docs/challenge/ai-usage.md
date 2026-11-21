@@ -13,9 +13,10 @@ The mistakes are the most useful part. They show why every output went through a
 |---|---|---|
 | **Claude (Opus 5.5) in agent mode** on claude.ai | Remote Linux workspace with shell, git, Go, kustomize, kubeconform, shellcheck, web search | Analysis of the upstream repository, design, writing manifests, scripts, pipeline and documentation, static validation |
 | **Claude Code** in the Ubuntu VM terminal | Local VM with Docker and kind | Real execution: bootstrap, demo, troubleshooting on the live cluster, fixes |
+| **Gemini** (Google search) | Browser, operator only | Domain context on card payments (ISO 8583 response codes, Visa Electron discontinued, PSP decline codes); checked against primary sources before use (§3.26) |
 
 **Division of roles.**
-- **I** provided the challenge text, the constraints (VM with 4 vCPU and 10 GB, same-day delivery, English documentation, speed not a concern) and the direction-setting decisions. I reviewed the outputs, then ran and verified them on the cluster.
+- **I** provided the challenge text, the constraints (a VM with 4 vCPU and 10 GB at the start, 11 GiB later (§3.19–§3.20); ten days from receiving the brief; English documentation) and the direction-setting decisions (README §1, "Assumptions and decisions"). I reviewed the outputs, then ran and verified them on the cluster.
 - **The agent** did the analysis, the implementation and the first validation.
 
 **Technical responsibility for what is in the repository stays with me.** Every file was read, and everything that can be run was run. §6 lists what still has to be verified live.
@@ -52,11 +53,13 @@ While writing, the AI built the diagnostic tooling:
 - alerts linked to the runbook;
 - reproducible failure scenarios.
 
-The real troubleshooting case with AI on the live cluster is in **§4**, to be filled in during the run in the VM.
+The real troubleshooting case with AI on the live cluster is in **§4** (`netpol-typo`, 2026-11-17); more cases from live operations are in §3.15, §3.19 and §3.26.
 
 ### 2.4 Documentation
 
 The agent generated drafts from the real repository files. Every command in the documents maps to an existing file or script. Runtime-dependent details (output, timings) must be confirmed in the VM (§6). The documentation was first written in Italian and then translated into English after a change of requirements. The translation went through the same check that every command and path still matches the repository.
+
+Near the end, the agent compared the brief, requirement by requirement, with the documents as they stood (a coverage matrix kept outside the repository). It found one requirement only partly met (the brief names ConfigMaps; the application had none, so the load generator settings moved into a generated one), one item never written (the brief's "decide and document" when nothing was clarified: README §1, "Assumptions and decisions") and about ten sentences made stale by the declined-card fix (frontend-only changes, frontend-only builds, scanning, a 500 that is now a 402). The matrix was built from the documents, not from the manifests: the ConfigMap gap was confirmed by rendering the overlays (`kubectl kustomize` + `grep`) before acting on it.
 
 ## 3. AI mistakes caught by verification
 
@@ -298,7 +301,7 @@ An honest list of what static validation cannot guarantee. Tick them during the 
 
 ## 7. Value delivered and limits
 
-**Value**: in about a day, a complete and consistent platform:
+**Value**: a first complete version in about a day of static work, then several days of real runs and fixes on the cluster (§3.9 onwards), for a consistent platform:
 - packaging for 2 environments and GitOps;
 - observability and security;
 - CI, runbook and failure scenarios;

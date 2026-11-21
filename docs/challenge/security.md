@@ -84,10 +84,12 @@ kubectl -n boutique-dev run root-test --image=busybox:1.38.0 --restart=Never -- 
 - **Least-privilege CI token**: `contents: read` by default. Only the publishing job gets `packages: write`, and it pushes only from `main`.
 - **CI holds no cluster credentials**: Argo CD reads from Git (pull model). A compromised pipeline cannot touch the cluster directly.
 - **Image scanning**: Trivy blocks publishing on fixable CRITICAL CVEs; HIGH ones are reported.
-- **Frontend image** is distroless (`gcr.io/distroless/static`): no shell, no package manager, minimal attack surface. Operational effect: no `kubectl exec ... sh`, so debugging uses `kubectl debug` with an ephemeral container.
+- **Images built from this fork** (frontend, checkoutservice, paymentservice) are scanned by Trivy in CI. Scanning paymentservice found a CRITICAL CVE that the upstream image running before also had (ai-usage §3.26).
+- **frontend and checkoutservice are distroless** (`gcr.io/distroless/static`): no shell, no package manager, minimal attack surface. Operational effect: no `kubectl exec ... sh`, so debugging uses `kubectl debug` with an ephemeral container. **paymentservice is not**: its upstream Dockerfile runs Node.js on Alpine (base pinned by digest), so the image has a shell.
 
 **Residual limits**:
-- upstream images are neither scanned nor signed by us (they come from Google's CI registry);
+- the other eight upstream service images (from Google's CI registry) and the third-party `redis` and `busybox` images are neither scanned nor signed by us;
+- the distroless base of frontend and checkoutservice is referenced by tag, not by digest (upstream Dockerfiles);
 - no signature verification at admission (next step: cosign + a Kyverno `verifyImages` policy);
 - no published SBOM.
 

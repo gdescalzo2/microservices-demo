@@ -69,6 +69,8 @@ kubectl -n boutique-prod get deploy,pods,svc,hpa,pdb
 kubectl -n gateway-infra get gateway; kubectl -n boutique-prod get httproute
 kubectl -n boutique-prod get networkpolicy
 kubectl -n boutique-prod describe deploy cartservice | grep -A3 REDIS_ADDR    # from a Secret, value not shown
+kubectl -n boutique-prod get configmap -l app.kubernetes.io/part-of=online-boutique -o yaml | grep -A1 '^  data:'   # USERS=5 (dev: 3)
+kubectl -n boutique-prod describe deploy loadgenerator | grep USERS           # read from the ConfigMap with a hash in its name
 kubectl get ns boutique-prod --show-labels                                     # PSA restricted
 platform/scripts/rbac-check.sh
 ```

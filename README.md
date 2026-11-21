@@ -42,19 +42,34 @@ Alternatives considered:
 **Parts used in the challenge:**
 - every service in the upstream Kustomize base (`kustomize/base`)
 - the upstream `network-policies` component
-- the **frontend** code, modified
+- the code of three services, modified: **frontend** (metrics, version header, declined cards as 402), **checkoutservice** and **paymentservice** (declined cards kept as a client-side error)
 
 Not used:
 - `shoppingassistantservice`, which needs Gemini/AlloyDB on GCP
 - the GCP components (Spanner, Memorystore, Cloud Operations)
 - Terraform and the Istio manifests
 
+### Assumptions and decisions
+
+The brief asks to clarify constraints first and, without further indications, to decide and document. No clarification was requested: these are the decisions taken, and why.
+
+| Topic | Decision | Why |
+|---|---|---|
+| Execution environment | A single local kind cluster in one Ubuntu VM (4 vCPU, ~11 GiB RAM, see §4) | The brief accepts a local cluster; it keeps the demo reproducible with no cloud account or cost |
+| Environments | `dev` and `prod` as namespaces on the same cluster, one Kustomize overlay each | The brief allows simulated environments; the limits are stated in §9 |
+| Distribution | Vanilla Kubernetes, not OpenShift | OpenShift is a plus, not required; the porting notes are in [architecture §6](docs/challenge/architecture.md) |
+| Depth | Production patterns at lab scale: GitOps, policies, alerts with runbook links, tested scripts; capacity deliberately reduced (`kind-sizing`) | "Solid, understandable, runnable", as the brief puts it, rather than complete; every compromise is listed in §9 |
+| Krateo | Evaluation, blueprint and a minimal PoC (core-provider only), not a full installation | The brief makes full integration optional; the full suite does not fit the VM ([krateo](docs/challenge/krateo.md)) |
+| Application code | Changed only where the challenge needs it: metrics, version header, the declined-card error chain | The brief asks for targeted changes only |
+| Time | Ten days from receiving the brief | The stated maximum |
+| Language | Documentation, comments and commits in English | A shared repository readable by any reviewer |
+
 ## 2. What was added or changed compared to upstream
 
 | Area | Change | Where |
 |---|---|---|
-| Code | Frontend: Prometheus metrics on a dedicated port `9090` (requests by route/code, latency histogram, `build_info` with version), `X-App-Version` header, version injected at build time. Unit tests. | `src/frontend/metrics.go`, `metrics_test.go`, `main.go`, `Dockerfile` |
-| Packaging | Platform base on top of the upstream Kustomize + `dev`/`prod` overlays + components | `platform/deploy/` |
+| Code | Frontend: Prometheus metrics on a dedicated port `9090` (requests by route/code, latency histogram, `build_info` with version), `X-App-Version` header, version injected at build time, a declined card answered 402 with a shopper-only page, a data-race fix. checkoutservice and paymentservice: a declined card travels as gRPC `FAILED_PRECONDITION` with its reason instead of `Internal` ([ai-usage §3.26](docs/challenge/ai-usage.md)). Unit tests in all three. | `src/frontend/`, `src/checkoutservice/`, `src/paymentservice/` |
+| Packaging | Platform base on top of the upstream Kustomize + `dev`/`prod` overlays + components; per-environment load generator settings in a generated ConfigMap (`loadgenerator-config`) | `platform/deploy/` |
 | Exposure | Gateway API (shared Gateway + one HTTPRoute per environment) instead of the LoadBalancer Service | `platform/addons/config/gateway/`, `overlays/*/httproute.yaml` |
 | Security | Redis password from a Secret (not in Git), dedicated ServiceAccount for Redis too, no API tokens mounted, seccomp, PSA `restricted`, per-persona RBAC, Kyverno policies | `platform/deploy/base/patches/`, `overlays/*/rbac.yaml`, `platform/addons/config/policies/` |
 | GitOps | Argo CD: AppProjects with guardrails, 3 Applications (platform-config, dev, prod) | `platform/gitops/` |
@@ -67,10 +82,10 @@ Not used:
 The whole diff against upstream sits in four places:
 - `platform/`
 - `docs/challenge/`
-- `src/frontend/` (4 files)
+- `src/frontend/`, `src/checkoutservice/`, `src/paymentservice/`
 - `.github/workflows/`
 
-See it with `git diff upstream/main --stat`.
+See it with `git diff --stat c7cb6d5b..HEAD` (`c7cb6d5b` is the last upstream commit before the fork).
 
 ## 3. Repository layout (new parts)
 
@@ -126,7 +141,7 @@ platform/scripts/bootstrap.sh          # 15-25 minutes the first time (image dow
 `bootstrap.sh` is idempotent. In order, it:
 1. creates the kind cluster and starts cloud-provider-kind (LoadBalancer + Gateway API);
 2. installs metrics-server, kube-prometheus-stack, Kyverno and Argo CD with Helm;
-3. builds and loads the frontend image;
+3. builds and loads every image the overlays declare from this fork (frontend, checkoutservice, paymentservice), at the versions they pin;
 4. generates the Redis Secrets;
 5. registers the Argo CD Applications;
 6. adds the `/etc/hosts` entries (after asking).
